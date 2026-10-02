@@ -25,7 +25,7 @@ final class StranglerProxy
      */
     public static function shouldHandle(array $config, string $actionId): bool
     {
-        if (!self::isEnabled($config['feature'] ?? null)) {
+        if (! self::isEnabled($config['feature'] ?? null)) {
             return false;
         }
 
@@ -92,6 +92,7 @@ final class StranglerProxy
 
         if ($baseUri === '') {
             self::sendError(500, 'strangler_not_configured');
+
             return;
         }
 
@@ -102,6 +103,7 @@ final class StranglerProxy
         $modifier = self::resolveModifier($modifierConfig);
         if ($modifier === null && self::hasModifierConfig($modifierConfig)) {
             self::sendError(500, 'strangler_modifier_not_configured');
+
             return;
         }
 
@@ -172,7 +174,7 @@ final class StranglerProxy
 
         self::debugLog(sprintf(
             'Strangler request proxied | feature: %s | action: %s | method: %s'
-                . ' | base_uri: %s | path: %s | status: %s | time_ms: %s',
+                .' | base_uri: %s | path: %s | status: %s | time_ms: %s',
             (string) ($config['feature'] ?? ''),
             $actionId,
             $method,
@@ -194,6 +196,7 @@ final class StranglerProxy
      * @param array<string, mixed> $settings
      * @param array<string, mixed> $query
      * @param array<string, mixed> $payload
+     *
      * @return array<string, mixed>
      */
     private static function requestOptions(
@@ -203,20 +206,20 @@ final class StranglerProxy
         array $payload,
     ): array {
         $headers = array_merge(self::extractForwardHeaders(), [
-            'X-User-Id' => (string) Yii::app()->user->id,
-            'X-Strangler' => '1',
+            'X-User-Id'          => (string) Yii::app()->user->id,
+            'X-Strangler'        => '1',
             'X-Strangler-Locale' => (string) (Yii::app()->language ?? ''),
-            'Accept' => 'application/json',
+            'Accept'             => 'application/json',
         ]);
 
         $options = [
-            RequestOptions::HEADERS => $headers,
-            RequestOptions::QUERY => $query,
-            'base_uri' => self::baseUri($settings),
-            RequestOptions::HTTP_ERRORS => false,
+            RequestOptions::HEADERS         => $headers,
+            RequestOptions::QUERY           => $query,
+            'base_uri'                      => self::baseUri($settings),
+            RequestOptions::HTTP_ERRORS     => false,
             RequestOptions::ALLOW_REDIRECTS => (bool) ($settings['allow_redirects'] ?? false),
-            RequestOptions::VERIFY => (bool) ($settings['verify_ssl'] ?? false),
-            RequestOptions::TIMEOUT => (float) ($settings['timeout'] ?? 10),
+            RequestOptions::VERIFY          => (bool) ($settings['verify_ssl'] ?? false),
+            RequestOptions::TIMEOUT         => (float) ($settings['timeout'] ?? 10),
             RequestOptions::CONNECT_TIMEOUT => (float) ($settings['connect_timeout'] ?? 3),
         ];
 
@@ -284,12 +287,12 @@ final class StranglerProxy
 
     private static function hasModifierConfig(mixed $modifierConfig): bool
     {
-        return !($modifierConfig === null || $modifierConfig === '' || $modifierConfig === []);
+        return ! ($modifierConfig === null || $modifierConfig === '' || $modifierConfig === []);
     }
 
     private static function resolveModifier(mixed $modifierConfig): ?StranglerModifierInterface
     {
-        if (!self::hasModifierConfig($modifierConfig)) {
+        if (! self::hasModifierConfig($modifierConfig)) {
             return null;
         }
 
@@ -301,7 +304,7 @@ final class StranglerProxy
             $modifierConfig = ['class' => $modifierConfig];
         }
 
-        if (!is_array($modifierConfig) || !isset($modifierConfig['class'])) {
+        if (! is_array($modifierConfig) || ! isset($modifierConfig['class'])) {
             Yii::log(
                 'Strangler modifier config must contain class',
                 CLogger::LEVEL_WARNING,
@@ -327,7 +330,7 @@ final class StranglerProxy
             return null;
         }
 
-        if (!$modifier instanceof StranglerModifierInterface) {
+        if (! $modifier instanceof StranglerModifierInterface) {
             Yii::log(
                 sprintf(
                     'Strangler modifier must implement StranglerModifierInterface: %s',
@@ -370,7 +373,7 @@ final class StranglerProxy
             $value = $body[$placeholder] ?? $body[$upper]
                 ?? $query[$placeholder] ?? $query[$upper] ?? null;
 
-            if (!is_scalar($value) || $value === '') {
+            if (! is_scalar($value) || $value === '') {
                 return '';
             }
 
@@ -401,7 +404,7 @@ final class StranglerProxy
 
         header('X-Strangler: 1', true);
         if (defined('YII_DEBUG') && YII_DEBUG) {
-            header('X-Strangler-Time: ' . $timeMs, true);
+            header('X-Strangler-Time: '.$timeMs, true);
         }
 
         http_response_code($status);
@@ -429,7 +432,7 @@ final class StranglerProxy
 
         $debug = defined('YII_DEBUG') && YII_DEBUG;
         $logRequests = (bool) ($settings['log_requests'] ?? false);
-        if (!$debug && !$logRequests) {
+        if (! $debug && ! $logRequests) {
             return;
         }
 

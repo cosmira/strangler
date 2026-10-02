@@ -18,7 +18,7 @@ final class StranglerFilter extends CFilter
     {
         $actionId = $filterChain->action->id;
 
-        if ($this->config === [] || !StranglerProxy::shouldHandle($this->config, $actionId)) {
+        if ($this->config === [] || ! StranglerProxy::shouldHandle($this->config, $actionId)) {
             return true;
         }
 

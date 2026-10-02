@@ -41,17 +41,17 @@ final class StranglerProxyTest extends TestCase
         $_GET = [];
         $_POST = [];
         $_SERVER['HTTP_HOST'] = 'legacy.test';
-        $_SERVER['SCRIPT_FILENAME'] = __DIR__ . '/bootstrap.php';
+        $_SERVER['SCRIPT_FILENAME'] = __DIR__.'/bootstrap.php';
         $_SERVER['SCRIPT_NAME'] = '/index.php';
         $_SERVER['REQUEST_URI'] = '/index.php';
         Yii::setApplication(null);
         Yii::createApplication(WebApplication::class, [
-            'basePath' => __DIR__,
+            'basePath'    => __DIR__,
             'runtimePath' => __DIR__,
-            'language' => 'ru',
-            'components' => [
+            'language'    => 'ru',
+            'components'  => [
                 'request' => ['class' => Request::class],
-                'user' => ['class' => User::class],
+                'user'    => ['class' => User::class],
             ],
             'params' => ['strangler' => [
                 'base_uri' => 'https://backend.test',
@@ -68,7 +68,7 @@ final class StranglerProxyTest extends TestCase
         $filter['client'] = $this->client([new Response(200, [], 'upstream')]);
         $chain = CFilterChain::create($this->controller, $this->controller->createAction('get'), [$filter]);
 
-        $body = $this->capture(static fn() => $chain->run());
+        $body = $this->capture(static fn () => $chain->run());
 
         self::assertSame('upstream', $body);
         self::assertFalse($this->controller->ran);
@@ -83,7 +83,7 @@ final class StranglerProxyTest extends TestCase
             Yii::app()->params['strangler'] = ['features' => ['example' => false]];
         }
         if ($kind === 'unsupported') {
-            $builder->bypassUsing(static fn() => true);
+            $builder->bypassUsing(static fn () => true);
         }
         $filter = $builder->build();
         $filter['client'] = $this->client([]);
@@ -118,7 +118,7 @@ final class StranglerProxyTest extends TestCase
     public function testBypassRetainsFieldsWhoseValueIsNull(): void
     {
         $config = Strangler::proxy('example')
-            ->payloadUsing(static fn() => ['special' => null])
+            ->payloadUsing(static fn () => ['special' => null])
             ->bypassWhenPayloadHas('PUT', ['special'])
             ->build()['config'];
 
@@ -136,7 +136,7 @@ final class StranglerProxyTest extends TestCase
         $events = [];
         $config = Strangler::proxy('example')
             ->usingModifier($modifier)
-            ->payloadUsing(static fn() => ['ID' => 'a/b c', 'NAME' => 'Alice'])
+            ->payloadUsing(static fn () => ['ID' => 'a/b c', 'NAME' => 'Alice'])
             ->bodyIdentifier('ID')
             ->put('update', '/api/items/{id}')
             ->afterRequest(static function ($method, $path) use (&$events, $modifier): void {
@@ -144,7 +144,7 @@ final class StranglerProxyTest extends TestCase
             })->build()['config'];
         $proxy = new StranglerProxy($this->client([new Response(201, ['X-Upstream' => 'yes'], 'saved')]));
 
-        $body = $this->capture(fn() => $proxy->handle($this->controller, $config, 'UPDATE'));
+        $body = $this->capture(fn () => $proxy->handle($this->controller, $config, 'UPDATE'));
 
         self::assertSame('mapped:saved', $body);
         self::assertSame(202, http_response_code());
@@ -164,11 +164,11 @@ final class StranglerProxyTest extends TestCase
     {
         $_GET = ['id' => 'url-id'];
         $config = Strangler::proxy('example')->bodyIdentifier('ID')
-            ->payloadUsing(static fn() => ['ID' => 'body-id'])
+            ->payloadUsing(static fn () => ['ID' => 'body-id'])
             ->put('update', '/api/items/{id}')->build()['config'];
         $proxy = new StranglerProxy($this->client([new Response(204)]));
 
-        $this->capture(fn() => $proxy->handle($this->controller, $config, 'update'));
+        $this->capture(fn () => $proxy->handle($this->controller, $config, 'update'));
 
         self::assertSame('/api/items/url-id', $this->history[0]['request']->getUri()->getPath());
     }
@@ -179,7 +179,7 @@ final class StranglerProxyTest extends TestCase
         $proxy = new StranglerProxy($this->client([new Response($status, ['Location' => '/next'], 'unchanged')]));
         $config = Strangler::proxy('example')->get('get', '/api/items')->build()['config'];
 
-        $body = $this->capture(fn() => $proxy->handle($this->controller, $config, 'get'));
+        $body = $this->capture(fn () => $proxy->handle($this->controller, $config, 'get'));
 
         self::assertSame($status, http_response_code());
         self::assertSame('unchanged', $body);
@@ -201,7 +201,7 @@ final class StranglerProxyTest extends TestCase
         $failure = new ConnectException('Connection refused', new HttpRequest('POST', '/api/items'));
         $proxy = new StranglerProxy($this->client([$failure]));
 
-        $body = $this->capture(fn() => $proxy->handle($this->controller, $config, 'create'));
+        $body = $this->capture(fn () => $proxy->handle($this->controller, $config, 'create'));
 
         self::assertSame(503, http_response_code());
         self::assertSame(['state' => 'error', 'error' => 'service_temporarily_unavailable'], json_decode($body, true));
@@ -215,7 +215,7 @@ final class StranglerProxyTest extends TestCase
         $proxy = new StranglerProxy($this->client([]));
         $config = Strangler::proxy('example')->get('get', '/api/items')->build()['config'];
 
-        $body = $this->capture(fn() => $proxy->handle($this->controller, $config, 'get'));
+        $body = $this->capture(fn () => $proxy->handle($this->controller, $config, 'get'));
 
         self::assertSame(500, http_response_code());
         self::assertSame('strangler_not_configured', json_decode($body, true)['error']);
@@ -229,7 +229,7 @@ final class StranglerProxyTest extends TestCase
             ->get('get', '/api/items')->build()['config'];
         $proxy = new StranglerProxy($this->client([]));
 
-        $body = $this->capture(fn() => $proxy->handle($this->controller, $config, 'get'));
+        $body = $this->capture(fn () => $proxy->handle($this->controller, $config, 'get'));
 
         self::assertSame(500, http_response_code());
         self::assertSame('strangler_modifier_not_configured', json_decode($body, true)['error']);
@@ -247,7 +247,7 @@ final class StranglerProxyTest extends TestCase
             ->get('get', '/api/items')->build()['config'];
         $proxy = new StranglerProxy($this->client([new Response(200, [], 'items')]));
 
-        self::assertSame('mapped:items', $this->capture(fn() => $proxy->handle($this->controller, $config, 'get')));
+        self::assertSame('mapped:items', $this->capture(fn () => $proxy->handle($this->controller, $config, 'get')));
     }
 
     public function testJsonPayloadIsReadWithoutAnApplicationSpecificController(): void
@@ -256,7 +256,7 @@ final class StranglerProxyTest extends TestCase
         $config = Strangler::proxy('example')->post('create', '/api/items')->build()['config'];
         $proxy = new StranglerProxy($this->client([new Response(201)]));
 
-        $this->capture(fn() => $proxy->handle($this->controller, $config, 'create'));
+        $this->capture(fn () => $proxy->handle($this->controller, $config, 'create'));
 
         self::assertSame(['name' => 'Alice'], json_decode((string) $this->history[0]['request']->getBody(), true));
     }
@@ -271,7 +271,7 @@ final class StranglerProxyTest extends TestCase
 
         $this->expectException(RuntimeException::class);
         $this->expectExceptionMessage('notification failed');
-        $this->capture(fn() => $proxy->handle($this->controller, $config, 'get'));
+        $this->capture(fn () => $proxy->handle($this->controller, $config, 'get'));
     }
 
     public function testHookTransportExceptionIsNotMistakenForAnUpstreamFailure(): void
@@ -280,12 +280,13 @@ final class StranglerProxyTest extends TestCase
         $config = Strangler::proxy('example')->get('get', '/api/items')
             ->afterRequest(static function () use (&$calls): void {
                 $calls++;
+
                 throw new ConnectException('hook failed', new HttpRequest('POST', '/notify'));
             })->build()['config'];
         $proxy = new StranglerProxy($this->client([new Response(200)]));
 
         try {
-            $this->capture(fn() => $proxy->handle($this->controller, $config, 'get'));
+            $this->capture(fn () => $proxy->handle($this->controller, $config, 'get'));
             self::fail('Hook exceptions must remain visible.');
         } catch (ConnectException $exception) {
             self::assertSame('hook failed', $exception->getMessage());
@@ -302,7 +303,7 @@ final class StranglerProxyTest extends TestCase
         $proxy = new StranglerProxy(new Client(['handler' => $handler]));
         $config = Strangler::proxy('example')->get('get', '/api/items')->build()['config'];
 
-        $body = $this->capture(fn() => $proxy->handle($this->controller, $config, 'get'));
+        $body = $this->capture(fn () => $proxy->handle($this->controller, $config, 'get'));
 
         self::assertSame(422, http_response_code());
         self::assertSame('invalid', $body);
@@ -316,7 +317,7 @@ final class StranglerProxyTest extends TestCase
         $proxy = new StranglerProxy($this->client([new Response(200)]));
         $config = Strangler::proxy('example')->get('get', '/api/items')->build()['config'];
 
-        $this->capture(fn() => $proxy->handle($this->controller, $config, 'get'));
+        $this->capture(fn () => $proxy->handle($this->controller, $config, 'get'));
 
         self::assertSame('https://backend.test/api/items', (string) $this->history[0]['request']->getUri());
     }
@@ -328,12 +329,13 @@ final class StranglerProxyTest extends TestCase
         $handler->push(Middleware::history($this->history));
 
         return new Client(['handler' => $handler, 'base_uri' => 'https://backend.test',
-            'http_errors' => false, 'allow_redirects' => false]);
+            'http_errors'            => false, 'allow_redirects' => false]);
     }
 
     private function capture(callable $operation): string
     {
         ob_start();
+
         try {
             $operation();
             self::fail('The proxy must end the Yii request.');

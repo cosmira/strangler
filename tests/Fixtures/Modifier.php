@@ -26,6 +26,6 @@ final class Modifier implements StranglerModifierInterface
     {
         $this->transformed = true;
 
-        return ['status' => 202, 'body' => 'mapped:' . $body, 'headers' => $headers];
+        return ['status' => 202, 'body' => 'mapped:'.$body, 'headers' => $headers];
     }
 }
