@@ -3,7 +3,7 @@
 A Composer package for forwarding selected Yii 1.1 controller actions to another
 HTTP backend while the remaining actions continue running in Yii.
 
-Requires PHP 8.1 or later, Yii 1.1 and Guzzle 7. The package has no Laravel dependency.
+Requires PHP 8.1 or later, Yii 1.1 and Guzzle 7.
 
 ## Installation
 
