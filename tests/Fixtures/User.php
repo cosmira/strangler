@@ -8,10 +8,12 @@ use CWebUser;
 
 final class User extends CWebUser
 {
+    public mixed $identifier = 7;
+
     public function init(): void {}
 
-    public function getId(): int
+    public function getId(): mixed
     {
-        return 7;
+        return $this->identifier;
     }
 }

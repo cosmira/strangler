@@ -5,7 +5,7 @@
             "src"
         ]
     },
-    "timeout": 20,
+    "timeout": 60,
     "logs": {
         "text": "infection.log",
         "summary": "infection-summary.log",
@@ -21,7 +21,7 @@
     "phpUnit": {
         "configDir": "."
     },
-    "minMsi": 96,
-    "minCoveredMsi": 96,
+    "minMsi": 100,
+    "minCoveredMsi": 100,
     "bootstrap": "tests/bootstrap.php"
 }

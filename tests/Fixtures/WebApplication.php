@@ -8,8 +8,12 @@ use CWebApplication;
 
 final class WebApplication extends CWebApplication
 {
+    public bool $shouldEnd = true;
+
     public function end(mixed $status = 0, mixed $exit = true): void
     {
-        throw new ApplicationEnded();
+        if ($this->shouldEnd) {
+            throw new ApplicationEnded();
+        }
     }
 }

@@ -1,5 +1,5 @@
 parameters:
-    level: 5
+    level: max
     paths:
         - src
         - tests
@@ -10,3 +10,6 @@ parameters:
         - tests/bootstrap.php
     scanDirectories:
         - vendor/yiisoft/yii/framework
+    stubFiles:
+        - stubs/Yii.stub
+        - stubs/Psr.stub

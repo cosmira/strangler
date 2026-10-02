@@ -1,5 +1,21 @@
 # Yii Strangler Proxy
 
+[![Tests][tests-badge]][tests-workflow]
+[![Code Coverage][coverage-badge]][coverage-workflow]
+[![Mutation Testing][mutation-badge]][mutation-workflow]
+[![Quality Assurance][quality-badge]][quality-workflow]
+
+[![Coding Guidelines][style-badge]][style-workflow]
+[![Markdown][markdown-badge]][markdown-workflow]
+[![ShellCheck][shellcheck-badge]][shellcheck-workflow]
+[![Spelling][spelling-badge]][spelling-workflow]
+
+[![PHP 8.2–8.5][php-badge]](composer.json)
+[![MIT license][license-badge]](LICENSE)
+[![PHPStan max][phpstan-badge]](phpstan.neon)
+[![Coverage gate 100%][coverage-gate-badge]][coverage-workflow]
+[![MSI gate 100%][mutation-gate-badge]](infection.json)
+
 A Strangler Fig adapter for gradually replacing legacy Yii 1.1 applications.
 Forward migrated controller actions to a modern HTTP backend while the remaining
 actions keep running in Yii; retire the legacy implementation one route at a time.
@@ -66,7 +82,10 @@ GET forwards query parameters without a body. The Yii routing parameter `r` is r
 `usingModifier()` accepts a `StranglerModifierInterface` instance, class name or Yii
 component configuration. The modifier transforms the query, payload and response.
 Field mappings and domain-specific compatibility rules belong to the application.
-An invalid configured modifier produces a JSON 500 response before sending a request.
+Malformed configurations, Yii component errors (`CException`) and components that
+do not implement the modifier interface produce a JSON 500 response before sending
+a request. Other exceptions from modifier constructors and transformations remain
+visible to Yii.
 
 `bypassUsing(callable $bypass)` receives the controller, normalized action and original
 query. Returning `true` keeps the request in Yii. `bypassWhenPayloadHas('update', ['special'])`
@@ -100,9 +119,52 @@ legacy proxy's behavior. `X-Strangler-Time` is included when `YII_DEBUG` is enab
 ```sh
 composer install
 composer test -- --order-by=random
+composer test:types
+composer test:rector
+composer test:coverage
+composer test:mutation -- --threads=4
+```
+
+PHPStan runs at `max`. Coverage requires exactly 100% of classes, methods and lines;
+the Clover report is saved to `build/coverage.xml`. Infection requires 100% MSI and
+covered MSI with the default mutators. Mutation runs select the test cases covering
+each mutant; timeouts count as escaped mutants and fail the check. Coverage and
+mutation runs need PCOV or Xdebug; PCOV includes the checkout so isolated PHPUnit
+tests can report coverage.
+The mutation runner handles macOS process-priority warnings that would otherwise
+make isolated tests fail before exercising a mutant.
+
+CI also runs Soda against `src` with `soda.php`. To run that check locally with
+a checkout of `cosmira/soda` at `.tools/soda`, install its dependencies and run:
+
+```sh
+composer install --working-dir=.tools/soda --no-dev
+composer test:soda
 ```
 
 Package tests use actual Yii filters and Guzzle MockHandler; no remote backend or
 application database is needed. Host applications retain their own end-to-end contract
 tests for permissions, business results and legacy compatibility. This initial extraction
 does not include application-specific REST mappers or install itself into a host project.
+
+[tests-badge]: https://github.com/cosmira/strangler/actions/workflows/phpunit.yml/badge.svg?branch=main
+[tests-workflow]: https://github.com/cosmira/strangler/actions/workflows/phpunit.yml
+[coverage-badge]: https://github.com/cosmira/strangler/actions/workflows/coverage.yml/badge.svg?branch=main
+[coverage-workflow]: https://github.com/cosmira/strangler/actions/workflows/coverage.yml
+[mutation-badge]: https://github.com/cosmira/strangler/actions/workflows/mutation.yml/badge.svg?branch=main
+[mutation-workflow]: https://github.com/cosmira/strangler/actions/workflows/mutation.yml
+[quality-badge]: https://github.com/cosmira/strangler/actions/workflows/quality.yml/badge.svg?branch=main
+[quality-workflow]: https://github.com/cosmira/strangler/actions/workflows/quality.yml
+[style-badge]: https://github.com/cosmira/strangler/actions/workflows/code-style.yml/badge.svg?branch=main
+[style-workflow]: https://github.com/cosmira/strangler/actions/workflows/code-style.yml
+[markdown-badge]: https://github.com/cosmira/strangler/actions/workflows/markdown.yml/badge.svg?branch=main
+[markdown-workflow]: https://github.com/cosmira/strangler/actions/workflows/markdown.yml
+[shellcheck-badge]: https://github.com/cosmira/strangler/actions/workflows/shellcheck.yml/badge.svg?branch=main
+[shellcheck-workflow]: https://github.com/cosmira/strangler/actions/workflows/shellcheck.yml
+[spelling-badge]: https://github.com/cosmira/strangler/actions/workflows/typos.yml/badge.svg?branch=main
+[spelling-workflow]: https://github.com/cosmira/strangler/actions/workflows/typos.yml
+[php-badge]: https://img.shields.io/badge/PHP-8.2--8.5-777BB4?logo=php&logoColor=white
+[license-badge]: https://img.shields.io/github/license/cosmira/strangler
+[phpstan-badge]: https://img.shields.io/badge/PHPStan-max-brightgreen
+[coverage-gate-badge]: https://img.shields.io/badge/coverage%20gate-100%25-brightgreen
+[mutation-gate-badge]: https://img.shields.io/badge/MSI%20gate-100%25-brightgreen

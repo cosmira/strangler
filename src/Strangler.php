@@ -6,22 +6,56 @@ namespace Cosmira\Strangler;
 
 use CController;
 
+/**
+ * Build the Yii filter configuration for migrated actions.
+ *
+ * @phpstan-type Config array{
+ *     feature?: string,
+ *     routes?: array<string, array{method: string, path: string}>,
+ *     modifier?: StranglerModifierInterface|string|array<string, mixed>,
+ *     bodyIdentifier?: string,
+ *     payloadReader?: callable(CController): array<array-key, mixed>,
+ *     bypass?: callable(CController, string, array<array-key, mixed>): bool,
+ *     afterRequest?: callable(string, string): void,
+ *     bypassPayloadFields?: array<string, list<string>>
+ * }
+ */
 final class Strangler
 {
-    /** @var array<string, mixed> */
+    /**
+     * @var Config
+     */
     private array $config;
 
+    /**
+     * @var array<string, array{method: string, path: string}>
+     */
+    private array $routes = [];
+
+    /**
+     * @var array<string, list<string>>
+     */
+    private array $bypassPayloadFields = [];
+
+    /**
+     * Initialize the filter builder.
+     */
     private function __construct(string $feature)
     {
         $this->config = ['feature' => $feature, 'routes' => []];
     }
 
+    /**
+     * Start a builder for the named feature flag.
+     */
     public static function proxy(string $feature): self
     {
         return new self($feature);
     }
 
-    /** @param StranglerModifierInterface|class-string|array<string, mixed> $modifier */
+    /**
+     * @param StranglerModifierInterface|string|array<string, mixed> $modifier
+     */
     public function usingModifier(StranglerModifierInterface|string|array $modifier): self
     {
         $this->config['modifier'] = $modifier;
@@ -29,7 +63,9 @@ final class Strangler
         return $this;
     }
 
-    /** @param callable(CController): array<string, mixed> $reader */
+    /**
+     * @param callable(CController): array<array-key, mixed> $reader
+     */
     public function payloadUsing(callable $reader): self
     {
         $this->config['payloadReader'] = $reader;
@@ -37,7 +73,9 @@ final class Strangler
         return $this;
     }
 
-    /** @param callable(CController, string, array<string, mixed>): bool $bypass */
+    /**
+     * @param callable(CController, string, array<array-key, mixed>): bool $bypass
+     */
     public function bypassUsing(callable $bypass): self
     {
         $this->config['bypass'] = $bypass;
@@ -45,7 +83,9 @@ final class Strangler
         return $this;
     }
 
-    /** @param callable(string, string): void $callback */
+    /**
+     * @param callable(string, string): void $callback
+     */
     public function afterRequest(callable $callback): self
     {
         $this->config['afterRequest'] = $callback;
@@ -53,6 +93,9 @@ final class Strangler
         return $this;
     }
 
+    /**
+     * Set the fallback payload field for route identifiers.
+     */
     public function bodyIdentifier(string $field): self
     {
         $this->config['bodyIdentifier'] = $field;
@@ -60,43 +103,65 @@ final class Strangler
         return $this;
     }
 
-    /** @param list<string> $fields */
+    /**
+     * @param list<string> $fields
+     */
     public function bypassWhenPayloadHas(string $action, array $fields): self
     {
-        $this->config['bypassPayloadFields'][strtolower($action)] = $fields;
+        $this->bypassPayloadFields[strtolower($action)] = $fields;
 
         return $this;
     }
 
+    /**
+     * Map a legacy action to an upstream GET route.
+     */
     public function get(string $action, string $path): self
     {
         return $this->route($action, 'GET', $path);
     }
 
+    /**
+     * Map a legacy action to an upstream POST route.
+     */
     public function post(string $action, string $path): self
     {
         return $this->route($action, 'POST', $path);
     }
 
+    /**
+     * Map a legacy action to an upstream PUT route.
+     */
     public function put(string $action, string $path): self
     {
         return $this->route($action, 'PUT', $path);
     }
 
+    /**
+     * Map a legacy action to an upstream DELETE route.
+     */
     public function delete(string $action, string $path): self
     {
         return $this->route($action, 'DELETE', $path);
     }
 
-    /** @return array{0: class-string<StranglerFilter>, config: array<string, mixed>} */
+    /**
+     * @return array{0: class-string<StranglerFilter>, config: Config}
+     */
     public function build(): array
     {
-        return [StranglerFilter::class, 'config' => $this->config];
+        return [StranglerFilter::class, 'config' => array_merge($this->config, [
+            'routes'              => $this->routes,
+            'bypassPayloadFields' => $this->bypassPayloadFields,
+        ])];
     }
 
+    /**
+     * Register a route using a case-insensitive action key.
+     */
     private function route(string $action, string $method, string $path): self
     {
-        $this->config['routes'][strtolower($action)] = ['method' => $method, 'path' => $path];
+        $this->routes[strtolower($action)] = ['method' => $method, 'path' => $path];
 
         return $this;
     }

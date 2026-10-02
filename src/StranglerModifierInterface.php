@@ -7,23 +7,23 @@ namespace Cosmira\Strangler;
 interface StranglerModifierInterface
 {
     /**
-     * @param array<string, mixed> $query
+     * @param array<array-key, mixed> $query
      *
-     * @return array<string, mixed>
+     * @return array<array-key, mixed>
      */
     public function transformQuery(string $actionId, array $query): array;
 
     /**
-     * @param array<string, mixed> $payload
+     * @param array<array-key, mixed> $payload
      *
-     * @return array<string, mixed>
+     * @return array<array-key, mixed>
      */
     public function transformPayload(string $actionId, array $payload): array;
 
     /**
-     * @param array<string, mixed> $headers
+     * @param array<string, array<string>> $headers
      *
-     * @return array{status: int, body: string, headers: array<string, mixed>}
+     * @return array{status: int, body: string, headers: array<string, array<string>>}
      */
     public function transformResponse(
         string $actionId,

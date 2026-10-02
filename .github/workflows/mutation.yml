@@ -44,7 +44,7 @@ jobs:
       - name: Run mutation tests
         run: |
           mkdir -p build/infection
-          vendor/bin/infection \
+          composer test:mutation -- \
             --threads=4 \
             --logger-github=true \
             --logger-html=build/infection/index.html \

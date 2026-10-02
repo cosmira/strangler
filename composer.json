@@ -49,8 +49,15 @@
     },
     "scripts": {
         "test": "@php vendor/bin/phpunit",
-        "test:coverage": "@php -d pcov.enabled=1 -d xdebug.mode=coverage vendor/bin/phpunit --coverage-text",
-        "test:mutation": "@php vendor/bin/infection",
+        "test:coverage": [
+            "@php -d pcov.enabled=1 -d pcov.directory=. -d xdebug.mode=coverage vendor/bin/phpunit --coverage-clover=build/coverage.xml --coverage-text",
+            "@php tools/check-coverage.php build/coverage.xml"
+        ],
+        "test:mutation": [
+            "Composer\\Config::disableProcessTimeout",
+            "@php tools/run-mutation.php"
+        ],
+        "test:soda": "@php .tools/soda/soda quality src --config=soda.php",
         "test:types": "@php vendor/bin/phpstan analyse --memory-limit=1G",
         "test:rector": [
             "@php vendor/bin/rector validate-config",

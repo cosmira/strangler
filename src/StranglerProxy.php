@@ -5,23 +5,51 @@ declare(strict_types=1);
 namespace Cosmira\Strangler;
 
 use CController;
+use CException;
 use CLogger;
+use Closure;
+use CWebApplication;
 use GuzzleHttp\Client;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\RequestOptions;
-use Throwable;
+use LogicException;
 use Yii;
 
-final class StranglerProxy
+/**
+ * @phpstan-import-type Config from Strangler
+ */
+final readonly class StranglerProxy
 {
-    public function __construct(private ?ClientInterface $client = null) {}
+    /**
+     * @var Closure(): float
+     */
+    private Closure $clock;
 
     /**
-     * @param array{
-     *     feature?: string,
-     *     routes?: array<string, array{method: string, path: string}>
-     * } $config
+     * Send responses through the Yii output boundary.
+     */
+    private ResponseEmitter $emitter;
+
+    /**
+     * Supply a client and optional output/clock adapters.
+     *
+     * @param Closure(): float|null $clock
+     */
+    public function __construct(
+        /**
+         * Upstream HTTP client, created lazily when omitted.
+         */
+        private ?ClientInterface $client = null,
+        ?ResponseEmitter $emitter = null,
+        ?Closure $clock = null,
+    ) {
+        $this->emitter = $emitter ?? new ResponseEmitter();
+        $this->clock = $clock ?? static fn (): float => microtime(true);
+    }
+
+    /**
+     * @param Config $config
      */
     public static function shouldHandle(array $config, string $actionId): bool
     {
@@ -36,11 +64,7 @@ final class StranglerProxy
     }
 
     /**
-     * @param array{
-     *     bypassPayloadFields?: array<string, string[]>,
-     *     payloadReader?: callable(CController): array<string, mixed>,
-     *     bypass?: callable(CController, string, array<string, mixed>): bool
-     * } $config
+     * @param Config $config
      */
     public static function shouldBypass(
         CController $controller,
@@ -52,7 +76,8 @@ final class StranglerProxy
         if ($bypass !== null && $bypass($controller, $actionKey, $_GET)) {
             return true;
         }
-        $fields = $config['bypassPayloadFields'][$actionKey] ?? [];
+        $bypassFields = $config['bypassPayloadFields'] ?? [];
+        $fields = $bypassFields[$actionKey] ?? [];
 
         if ($fields === []) {
             return false;
@@ -70,18 +95,13 @@ final class StranglerProxy
     }
 
     /**
-     * @param array{
-     *     routes?: array<string, array{method: string, path: string}>,
-     *     modifier?: StranglerModifierInterface|class-string|array<string, mixed>,
-     *     bodyIdentifier?: string,
-     *     payloadReader?: callable(CController): array<string, mixed>,
-     *     afterRequest?: callable(string, string): void
-     * } $config
+     * @param Config $config
      */
     public function handle(CController $controller, array $config, string $actionId): void
     {
         $actionKey = self::normalizeActionKey($actionId);
-        $route = $config['routes'][$actionKey] ?? null;
+        $routes = $config['routes'] ?? [];
+        $route = $routes[$actionKey] ?? null;
 
         if ($route === null) {
             return;
@@ -91,18 +111,18 @@ final class StranglerProxy
         $baseUri = self::baseUri($settings);
 
         if ($baseUri === '') {
-            self::sendError(500, 'strangler_not_configured');
+            $this->sendError(500, 'strangler_not_configured');
 
             return;
         }
 
-        $request = Yii::app()->request;
-        $startedAt = microtime(true);
+        $request = self::application()->getRequest();
+        $startedAt = ($this->clock)();
 
         $modifierConfig = $config['modifier'] ?? null;
         $modifier = self::resolveModifier($modifierConfig);
         if ($modifier === null && self::hasModifierConfig($modifierConfig)) {
-            self::sendError(500, 'strangler_modifier_not_configured');
+            $this->sendError(500, 'strangler_modifier_not_configured');
 
             return;
         }
@@ -111,11 +131,7 @@ final class StranglerProxy
         unset($query['r']);
 
         $payload = self::readPayload($controller, $config);
-        $routeId = $request->getParam('id');
-        $missingRouteId = $routeId === null || $routeId === '';
-        if ($missingRouteId && isset($config['bodyIdentifier'])) {
-            $routeId = $payload[$config['bodyIdentifier']] ?? null;
-        }
+        $routeId = self::routeIdentifier($request->getParam('id'), $payload, $config);
         $forwardPayload = $payload;
         $forwardQuery = $query;
 
@@ -146,7 +162,7 @@ final class StranglerProxy
                 'strangler',
             );
 
-            self::sendError(503, 'service_temporarily_unavailable');
+            $this->sendError(503, 'service_temporarily_unavailable');
 
             return;
         }
@@ -165,12 +181,12 @@ final class StranglerProxy
                 $responseHeaders,
             );
 
-            $statusCode = (int) ($transformed['status'] ?? $statusCode);
-            $responseBody = (string) ($transformed['body'] ?? $responseBody);
-            $responseHeaders = (array) ($transformed['headers'] ?? $responseHeaders);
+            $statusCode = $transformed['status'];
+            $responseBody = $transformed['body'];
+            $responseHeaders = $transformed['headers'];
         }
 
-        $timeMs = (int) round((microtime(true) - $startedAt) * 1000);
+        $timeMs = (int) round((($this->clock)() - $startedAt) * 1000);
 
         self::debugLog(sprintf(
             'Strangler request proxied | feature: %s | action: %s | method: %s'
@@ -184,7 +200,7 @@ final class StranglerProxy
             $timeMs,
         ));
 
-        self::sendResponse(
+        $this->emitter->send(
             $statusCode,
             $responseBody,
             $responseHeaders,
@@ -193,11 +209,11 @@ final class StranglerProxy
     }
 
     /**
-     * @param array<string, mixed> $settings
-     * @param array<string, mixed> $query
-     * @param array<string, mixed> $payload
+     * @param array<array-key, mixed> $settings
+     * @param array<array-key, mixed> $query
+     * @param array<array-key, mixed> $payload
      *
-     * @return array<string, mixed>
+     * @return array<array-key, mixed>
      */
     private static function requestOptions(
         array $settings,
@@ -206,9 +222,9 @@ final class StranglerProxy
         array $payload,
     ): array {
         $headers = array_merge(self::extractForwardHeaders(), [
-            'X-User-Id'          => (string) Yii::app()->user->id,
+            'X-User-Id'          => self::userId(),
             'X-Strangler'        => '1',
-            'X-Strangler-Locale' => (string) (Yii::app()->language ?? ''),
+            'X-Strangler-Locale' => self::application()->getLanguage(),
             'Accept'             => 'application/json',
         ]);
 
@@ -219,8 +235,8 @@ final class StranglerProxy
             RequestOptions::HTTP_ERRORS     => false,
             RequestOptions::ALLOW_REDIRECTS => (bool) ($settings['allow_redirects'] ?? false),
             RequestOptions::VERIFY          => (bool) ($settings['verify_ssl'] ?? false),
-            RequestOptions::TIMEOUT         => (float) ($settings['timeout'] ?? 10),
-            RequestOptions::CONNECT_TIMEOUT => (float) ($settings['connect_timeout'] ?? 3),
+            RequestOptions::TIMEOUT         => self::timeout($settings, 'timeout', 10),
+            RequestOptions::CONNECT_TIMEOUT => self::timeout($settings, 'connect_timeout', 3),
         ];
 
         if (in_array($method, ['POST', 'PUT', 'PATCH', 'DELETE'], true)) {
@@ -230,12 +246,19 @@ final class StranglerProxy
         return $options;
     }
 
+    /**
+     * Normalize legacy action names for route lookup.
+     */
     private static function normalizeActionKey(string $actionId): string
     {
         return strtolower($actionId);
     }
 
-    /** @param array<string, mixed> $config */
+    /**
+     * @param Config $config
+     *
+     * @return array<array-key, mixed>
+     */
     private static function readPayload(CController $controller, array $config): array
     {
         $reader = $config['payloadReader'] ?? null;
@@ -244,12 +267,14 @@ final class StranglerProxy
             return $reader($controller);
         }
 
-        $decoded = json_decode((string) Yii::app()->request->getRawBody(), true);
+        $decoded = json_decode((string) self::application()->getRequest()->getRawBody(), true);
 
         return is_array($decoded) ? $decoded : [];
     }
 
-    /** @param array<string, mixed> $config */
+    /**
+     * @param Config $config
+     */
     private static function afterRequest(array $config, string $method, string $path): void
     {
         $callback = $config['afterRequest'] ?? null;
@@ -258,38 +283,55 @@ final class StranglerProxy
         }
     }
 
+    /**
+     * Read the named feature flag from application settings.
+     */
     private static function isEnabled(?string $feature): bool
     {
         if ($feature === null || $feature === '') {
             return false;
         }
 
-        $strangler = Yii::app()->params['strangler'] ?? [];
+        $strangler = self::settings();
         $features = $strangler['features'] ?? [];
+        if (! is_array($features)) {
+            return false;
+        }
 
         return (bool) ($features[$feature] ?? false);
     }
 
+    /**
+     * @return array<array-key, mixed>
+     */
     private static function settings(): array
     {
-        $settings = Yii::app()->params['strangler'] ?? [];
+        $settings = self::application()->getParams()->itemAt('strangler') ?? [];
 
         return is_array($settings) ? $settings : [];
     }
 
     /**
-     * @param array<string, mixed> $settings
+     * @param array<array-key, mixed> $settings
      */
     private static function baseUri(array $settings): string
     {
-        return rtrim(trim((string) ($settings['base_uri'] ?? '')), '/');
+        $uri = $settings['base_uri'] ?? '';
+
+        return is_string($uri) ? rtrim(trim($uri), '/') : '';
     }
 
+    /**
+     * Determine whether a modifier was explicitly configured.
+     */
     private static function hasModifierConfig(mixed $modifierConfig): bool
     {
         return ! ($modifierConfig === null || $modifierConfig === '' || $modifierConfig === []);
     }
 
+    /**
+     * Resolve an instance or Yii component configuration.
+     */
     private static function resolveModifier(mixed $modifierConfig): ?StranglerModifierInterface
     {
         if (! self::hasModifierConfig($modifierConfig)) {
@@ -304,7 +346,7 @@ final class StranglerProxy
             $modifierConfig = ['class' => $modifierConfig];
         }
 
-        if (! is_array($modifierConfig) || ! isset($modifierConfig['class'])) {
+        if (! is_array($modifierConfig) || ! is_string($modifierConfig['class'] ?? null)) {
             Yii::log(
                 'Strangler modifier config must contain class',
                 CLogger::LEVEL_WARNING,
@@ -314,13 +356,23 @@ final class StranglerProxy
             return null;
         }
 
+        return self::createModifier($modifierConfig);
+    }
+
+    /**
+     * Instantiate and validate an application-owned Yii modifier.
+     *
+     * @param array{class: string, ...} $modifierConfig
+     */
+    private static function createModifier(array $modifierConfig): ?StranglerModifierInterface
+    {
         try {
             $modifier = Yii::createComponent($modifierConfig);
-        } catch (Throwable $exception) {
+        } catch (CException $exception) {
             Yii::log(
                 sprintf(
                     'Strangler modifier could not be created: %s | error: %s',
-                    (string) $modifierConfig['class'],
+                    $modifierConfig['class'],
                     $exception->getMessage(),
                 ),
                 CLogger::LEVEL_WARNING,
@@ -334,7 +386,7 @@ final class StranglerProxy
             Yii::log(
                 sprintf(
                     'Strangler modifier must implement StranglerModifierInterface: %s',
-                    (string) $modifierConfig['class'],
+                    $modifierConfig['class'],
                 ),
                 CLogger::LEVEL_WARNING,
                 'strangler',
@@ -347,8 +399,8 @@ final class StranglerProxy
     }
 
     /**
-     * @param array<string, mixed> $query
-     * @param array<string, mixed> $body
+     * @param array<array-key, mixed> $query
+     * @param array<array-key, mixed> $body
      */
     private static function resolvePath(
         string $pathTemplate,
@@ -358,7 +410,9 @@ final class StranglerProxy
     ): string {
         $routeId = is_scalar($routeId) ? (string) $routeId : null;
 
-        return preg_replace_callback('/\{([^}]+)\}/', static function (array $matches) use (
+        $pattern = '/\{([^}]+)\}/';
+
+        return (string) preg_replace_callback($pattern, static function (array $matches) use (
             $query,
             $body,
             $routeId
@@ -378,60 +432,26 @@ final class StranglerProxy
             }
 
             return rawurlencode((string) $value);
-        }, $pathTemplate) ?? $pathTemplate;
+        }, $pathTemplate);
     }
 
     /**
-     * @param array<string, mixed> $headers
+     * Emit a JSON error and end the Yii request.
      */
-    private static function sendResponse(
-        int $status,
-        string $body,
-        array $headers,
-        int $timeMs,
-    ): void {
-        foreach ($headers as $name => $values) {
-            $headerName = strtolower($name);
-
-            if (in_array($headerName, ['transfer-encoding', 'content-length'], true)) {
-                continue;
-            }
-
-            foreach ($values as $value) {
-                header(sprintf('%s: %s', $name, $value), false);
-            }
-        }
-
-        header('X-Strangler: 1', true);
-        if (defined('YII_DEBUG') && YII_DEBUG) {
-            header('X-Strangler-Time: '.$timeMs, true);
-        }
-
-        http_response_code($status);
-        echo $body;
-        Yii::app()->end();
-    }
-
-    private static function sendError(int $status, string $code): void
+    private function sendError(int $status, string $code): void
     {
-        http_response_code($status);
-        header('Content-Type: application/json; charset=utf-8', true);
-        header('X-Strangler: 1', true);
-
-        echo json_encode([
-            'state' => 'error',
-            'error' => $code,
-        ], JSON_UNESCAPED_UNICODE);
-
-        Yii::app()->end();
+        $this->emitter->error($status, $code);
     }
 
+    /**
+     * Log request details when debugging or request logging is enabled.
+     */
     private static function debugLog(string $message): void
     {
         $settings = self::settings();
 
-        $debug = defined('YII_DEBUG') && YII_DEBUG;
-        $logRequests = (bool) ($settings['log_requests'] ?? false);
+        $debug = YII_DEBUG;
+        $logRequests = $settings['log_requests'] ?? false;
         if (! $debug && ! $logRequests) {
             return;
         }
@@ -446,20 +466,76 @@ final class StranglerProxy
     {
         $result = [];
         foreach ($_SERVER as $key => $value) {
-            if (strpos($key, 'HTTP_') !== 0) {
+            if (! str_starts_with($key, 'HTTP_')) {
                 continue;
             }
 
             $headerName = str_replace('_', '-', substr($key, 5));
-            $headerName = implode('-', array_map('ucfirst', explode('-', strtolower($headerName))));
+            $headerName = implode('-', array_map(
+                ucfirst(...),
+                explode('-', strtolower($headerName)),
+            ));
 
             if (in_array($headerName, ['Host', 'Content-Length', 'Connection'], true)) {
                 continue;
             }
 
-            $result[$headerName] = (string) $value;
+            if (is_string($value)) {
+                $result[$headerName] = $value;
+            }
         }
 
         return $result;
+    }
+
+    /**
+     * Require the web application used by this Yii controller adapter.
+     */
+    public static function application(): CWebApplication
+    {
+        $application = Yii::app();
+        if (! $application instanceof CWebApplication) {
+            throw new LogicException('Strangler requires a Yii web application.');
+        }
+
+        return $application;
+    }
+
+    /**
+     * Convert only scalar Yii user identifiers to HTTP header values.
+     */
+    private static function userId(): string
+    {
+        $id = self::application()->getUser()->getId();
+
+        return is_scalar($id) ? (string) $id : '';
+    }
+
+    /**
+     * Read numeric timeout settings, retaining defaults for invalid input.
+     *
+     * @param array<array-key, mixed> $settings
+     */
+    private static function timeout(array $settings, string $name, float $default): float
+    {
+        $value = $settings[$name] ?? $default;
+
+        return is_numeric($value) ? (float) $value : $default;
+    }
+
+    /**
+     * Prefer the request identifier before the original body identifier.
+     *
+     * @param array<array-key, mixed> $payload
+     * @param Config                  $config
+     */
+    private static function routeIdentifier(mixed $id, array $payload, array $config): mixed
+    {
+        $missingId = $id === null || $id === '';
+        if ($missingId && isset($config['bodyIdentifier'])) {
+            return $payload[$config['bodyIdentifier']] ?? null;
+        }
+
+        return $id;
     }
 }

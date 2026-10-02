@@ -119,4 +119,4 @@ jobs:
         run: composer install --working-dir=.tools/soda --no-dev --prefer-dist --no-interaction --no-progress
 
       - name: Check source and PHPDoc contracts
-        run: php .tools/soda/soda quality src --config=soda.php
+        run: composer test:soda

@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         cacheDirectory=".phpunit.cache"
          backupGlobals="false"
          bootstrap="tests/bootstrap.php"
          colors="true"
@@ -8,7 +9,7 @@
          stopOnError="false"
          executionOrder="random"
          defaultTestSuite="Main"
-         xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/11.5/phpunit.xsd">
+         xsi:noNamespaceSchemaLocation="vendor/phpunit/phpunit/phpunit.xsd">
     <source>
         <include>
             <directory suffix=".php">./src</directory>

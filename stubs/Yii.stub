@@ -1,0 +1,41 @@
+<?php
+
+// Yii 1.1's untyped magic-access methods used by this web-only adapter.
+class CModule
+{
+    /** @return CAttributeCollection */
+    public function getParams() {}
+}
+
+class CApplication extends CModule
+{
+    /** @return CHttpRequest */
+    public function getRequest() {}
+
+    /** @return string */
+    public function getLanguage() {}
+}
+
+class CWebApplication extends CApplication
+{
+    /** @return CWebUser */
+    public function getUser() {}
+}
+
+class CAttributeCollection
+{
+    /** @return mixed */
+    public function itemAt(mixed $key) {}
+
+    /** @return void */
+    public function add(mixed $key, mixed $value) {}
+}
+
+class CHttpRequest {}
+class CWebUser {}
+
+class CAction
+{
+    /** @return string */
+    public function getId() {}
+}
