@@ -108,7 +108,7 @@ final class ApiAdaptationGuideTest extends TestCase
         if (! class_exists('CatalogApiModifier', false)) {
             $guide = file_get_contents(dirname(__DIR__).'/docs/api-adaptation.md');
             self::assertIsString($guide);
-            if (preg_match('/```php\n(.*?)\n```/s', $guide, $matches) !== 1) {
+            if (preg_match('/```php\r?\n(.*?)\r?\n```/s', $guide, $matches) !== 1) {
                 throw new RuntimeException('The guide must contain its runnable modifier example.');
             }
             $path = tempnam(sys_get_temp_dir(), 'strangler-guide-');

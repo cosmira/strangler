@@ -4,25 +4,6 @@
 [![PHP 8.2–8.5][php-badge]](composer.json)
 [![MIT license][license-badge]](LICENSE)
 
-<details>
-<summary>Quality checks</summary>
-
-[![Code Coverage][coverage-badge]][coverage-workflow]
-[![Mutation Testing][mutation-badge]][mutation-workflow]
-[![Quality Assurance][quality-badge]][quality-workflow]
-[![Coding Guidelines][style-badge]][style-workflow]
-[![Markdown][markdown-badge]][markdown-workflow]
-[![ShellCheck][shellcheck-badge]][shellcheck-workflow]
-[![Spelling][spelling-badge]][spelling-workflow]
-[![PHPStan max][phpstan-badge]](phpstan.neon)
-[![Coverage gate 100%][coverage-gate-badge]][coverage-workflow]
-[![MSI gate 100%][mutation-gate-badge]](infection.json)
-
-The coverage and mutation badges describe enforced quality gates, not a guarantee
-that every application's API contract is compatible.
-
-</details>
-
 Migrate a Yii 1.1 application to a new monolith one feature at a time.
 Keep authentication, sessions and access checks in Yii; Strangler forwards enabled
 actions and leaves the remaining actions in the legacy application. When the APIs
@@ -174,6 +155,22 @@ Handled responses include `X-Strangler: 1`. In `YII_DEBUG`, backend responses al
 include `X-Strangler-Time` in milliseconds. Enable `log_requests` to record forwarding
 in the Yii `strangler` category. If a request stays in Yii, check the feature flag,
 action mapping and bypass rule; see [logging and callbacks](docs/integration.md#logging-and-callbacks).
+
+## Quality checks
+
+[![Code Coverage][coverage-badge]][coverage-workflow]
+[![Mutation Testing][mutation-badge]][mutation-workflow]
+[![Quality Assurance][quality-badge]][quality-workflow]
+[![Coding Guidelines][style-badge]][style-workflow]
+[![Markdown][markdown-badge]][markdown-workflow]
+[![ShellCheck][shellcheck-badge]][shellcheck-workflow]
+[![Spelling][spelling-badge]][spelling-workflow]
+[![PHPStan max][phpstan-badge]](phpstan.neon)
+[![Coverage gate 100%][coverage-gate-badge]][coverage-workflow]
+[![MSI gate 100%][mutation-gate-badge]](infection.json)
+
+The coverage and mutation badges describe enforced quality gates, not a guarantee
+that every application's API contract is compatible.
 
 [tests-badge]: https://github.com/cosmira/strangler/actions/workflows/phpunit.yml/badge.svg?branch=main
 [tests-workflow]: https://github.com/cosmira/strangler/actions/workflows/phpunit.yml
