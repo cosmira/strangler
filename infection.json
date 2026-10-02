@@ -5,7 +5,7 @@
             "src"
         ]
     },
-    "timeout": 60,
+    "timeout": 120,
     "logs": {
         "text": "infection.log",
         "summary": "infection-summary.log",

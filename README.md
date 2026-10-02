@@ -1,4 +1,4 @@
-# Yii Strangler Proxy
+# Yii 1 Strangler Proxy
 
 [![Tests][tests-badge]][tests-workflow]
 [![PHP 8.2–8.5][php-badge]](composer.json)
@@ -25,34 +25,17 @@ It forwards enabled, mapped actions; otherwise, Yii runs the legacy action.
 
 ## Getting started
 
-Until a tagged release is available, clone the package beside your Yii application:
+Install the tagged release directly from its Git repository in your Yii application:
 
 ```shell
-git clone https://github.com/cosmira/strangler.git ../strangler
+composer config repositories.yii1-strangler-proxy vcs https://github.com/cosmira/yii1-strangler-proxy
+composer require cosmira/yii1-strangler-proxy:^0.1
 ```
 
-Merge these entries into the application's `composer.json`:
-
-```json
-{
-    "repositories": [
-        {
-            "type": "path",
-            "url": "../strangler",
-            "options": {
-                "symlink": false,
-                "versions": {"cosmira/strangler": "dev-main"}
-            }
-        }
-    ],
-    "require": {"cosmira/strangler": "dev-main"}
-}
-```
-
-Then run `composer update cosmira/strangler --with-all-dependencies` and load
-Composer's `vendor/autoload.php` before the Yii bootstrap. Record the package's
-reviewed commit with `git -C ../strangler rev-parse HEAD`; deploy that same checkout
-and your application's `composer.lock`. The pre-release API may change.
+The VCS entry is needed until the package is registered on Packagist.
+Load Composer's `vendor/autoload.php` before the Yii bootstrap. Commit your
+application's `composer.lock` and use `composer install` for deployments.
+For working on the package itself, see [local development](docs/integration.md#local-development).
 
 Configure an existing backend endpoint returning `{"ID":42,"NAME":"Desk"}`:
 
@@ -62,7 +45,7 @@ Configure an existing backend endpoint returning `{"ID":42,"NAME":"Desk"}`:
         'base_uri' => 'https://backend.example',
         'timeout' => 10,
         'connect_timeout' => 3,
-        'features' => ['catalog' => true],
+        'features' => ['catalog' => false],
     ],
 ],
 ```
@@ -104,7 +87,10 @@ Write actions still require preceding HTTP verb, CSRF and resource-access checks
 > `postFilter()` do not run when Strangler ends the request. Review inherited hooks
 > and cleanup before enabling the feature.
 
-With a permitted legacy session, request the existing API:
+First verify that direct backend calls without the trusted token fail, and that
+all Yii access checks run before Strangler. Then set `features.catalog` to the
+boolean `true`, reload your application's configuration and, with a permitted
+legacy session, request the existing API:
 
 ```shell
 curl -i --cookie yii-session.txt 'https://legacy.example/index.php?r=catalog/view&id=42'
@@ -112,12 +98,14 @@ curl -i --cookie yii-session.txt 'https://legacy.example/index.php?r=catalog/vie
 
 Expect the backend body `{"ID":42,"NAME":"Desk"}`, its status, and `X-Strangler: 1`.
 Turn `features.catalog` off and repeat: Yii should run `actionView()` instead.
-GET and HEAD send query parameters; POST, PUT, PATCH and DELETE also send JSON.
+Configure `base_uri` as a trusted HTTP(S) origin with no path, query or credentials;
+put the complete backend path in each route. Redirects are returned without following
+them. GET and HEAD send query parameters; POST, PUT, PATCH and DELETE also send JSON.
 Missing URL parameters or invalid JSON return `400` before contacting the backend.
 
 ## When the APIs differ
 
-Attach an **API contract adapter** with `usingModifier()`. It translates fields,
+Attach an **API contract adapter** with `usingAdapter()`. It translates fields,
 nesting, types and responses; `payloadUsing()` reads legacy form fields.
 Follow the [API adaptation guide](docs/api-adaptation.md) for a complete example
 with pagination, body identifiers and both backend and transport errors.
@@ -153,7 +141,8 @@ reach the application's Yii error handler.
 
 Handled responses include `X-Strangler: 1`. In `YII_DEBUG`, backend responses also
 include `X-Strangler-Time` in milliseconds. Enable `log_requests` to record forwarding
-in the Yii `strangler` category. If a request stays in Yii, check the feature flag,
+in the Yii `strangler` category with the feature and incoming `X-Request-Id`.
+If a request stays in Yii, check the feature flag,
 action mapping and bypass rule; see [logging and callbacks](docs/integration.md#logging-and-callbacks).
 
 ## Quality checks
@@ -172,24 +161,24 @@ action mapping and bypass rule; see [logging and callbacks](docs/integration.md#
 The coverage and mutation badges describe enforced quality gates, not a guarantee
 that every application's API contract is compatible.
 
-[tests-badge]: https://github.com/cosmira/strangler/actions/workflows/phpunit.yml/badge.svg?branch=main
-[tests-workflow]: https://github.com/cosmira/strangler/actions/workflows/phpunit.yml
-[coverage-badge]: https://github.com/cosmira/strangler/actions/workflows/coverage.yml/badge.svg?branch=main
-[coverage-workflow]: https://github.com/cosmira/strangler/actions/workflows/coverage.yml
-[mutation-badge]: https://github.com/cosmira/strangler/actions/workflows/mutation.yml/badge.svg?branch=main
-[mutation-workflow]: https://github.com/cosmira/strangler/actions/workflows/mutation.yml
-[quality-badge]: https://github.com/cosmira/strangler/actions/workflows/quality.yml/badge.svg?branch=main
-[quality-workflow]: https://github.com/cosmira/strangler/actions/workflows/quality.yml
-[style-badge]: https://github.com/cosmira/strangler/actions/workflows/code-style.yml/badge.svg?branch=main
-[style-workflow]: https://github.com/cosmira/strangler/actions/workflows/code-style.yml
-[markdown-badge]: https://github.com/cosmira/strangler/actions/workflows/markdown.yml/badge.svg?branch=main
-[markdown-workflow]: https://github.com/cosmira/strangler/actions/workflows/markdown.yml
-[shellcheck-badge]: https://github.com/cosmira/strangler/actions/workflows/shellcheck.yml/badge.svg?branch=main
-[shellcheck-workflow]: https://github.com/cosmira/strangler/actions/workflows/shellcheck.yml
-[spelling-badge]: https://github.com/cosmira/strangler/actions/workflows/typos.yml/badge.svg?branch=main
-[spelling-workflow]: https://github.com/cosmira/strangler/actions/workflows/typos.yml
+[tests-badge]: https://github.com/cosmira/yii1-strangler-proxy/actions/workflows/phpunit.yml/badge.svg?branch=main
+[tests-workflow]: https://github.com/cosmira/yii1-strangler-proxy/actions/workflows/phpunit.yml
+[coverage-badge]: https://github.com/cosmira/yii1-strangler-proxy/actions/workflows/coverage.yml/badge.svg?branch=main
+[coverage-workflow]: https://github.com/cosmira/yii1-strangler-proxy/actions/workflows/coverage.yml
+[mutation-badge]: https://github.com/cosmira/yii1-strangler-proxy/actions/workflows/mutation.yml/badge.svg?branch=main
+[mutation-workflow]: https://github.com/cosmira/yii1-strangler-proxy/actions/workflows/mutation.yml
+[quality-badge]: https://github.com/cosmira/yii1-strangler-proxy/actions/workflows/quality.yml/badge.svg?branch=main
+[quality-workflow]: https://github.com/cosmira/yii1-strangler-proxy/actions/workflows/quality.yml
+[style-badge]: https://github.com/cosmira/yii1-strangler-proxy/actions/workflows/code-style.yml/badge.svg?branch=main
+[style-workflow]: https://github.com/cosmira/yii1-strangler-proxy/actions/workflows/code-style.yml
+[markdown-badge]: https://github.com/cosmira/yii1-strangler-proxy/actions/workflows/markdown.yml/badge.svg?branch=main
+[markdown-workflow]: https://github.com/cosmira/yii1-strangler-proxy/actions/workflows/markdown.yml
+[shellcheck-badge]: https://github.com/cosmira/yii1-strangler-proxy/actions/workflows/shellcheck.yml/badge.svg?branch=main
+[shellcheck-workflow]: https://github.com/cosmira/yii1-strangler-proxy/actions/workflows/shellcheck.yml
+[spelling-badge]: https://github.com/cosmira/yii1-strangler-proxy/actions/workflows/typos.yml/badge.svg?branch=main
+[spelling-workflow]: https://github.com/cosmira/yii1-strangler-proxy/actions/workflows/typos.yml
 [php-badge]: https://img.shields.io/badge/PHP-8.2--8.5-777BB4?logo=php&logoColor=white
-[license-badge]: https://img.shields.io/github/license/cosmira/strangler
+[license-badge]: https://img.shields.io/github/license/cosmira/yii1-strangler-proxy
 [phpstan-badge]: https://img.shields.io/badge/PHPStan-max-brightgreen
 [coverage-gate-badge]: https://img.shields.io/badge/coverage%20gate-100%25-brightgreen
 [mutation-gate-badge]: https://img.shields.io/badge/MSI%20gate-100%25-brightgreen

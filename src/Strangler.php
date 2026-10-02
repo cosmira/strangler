@@ -13,11 +13,11 @@ use InvalidArgumentException;
  * @phpstan-type Config array{
  *     feature?: string,
  *     routes?: array<string, array{method: string, path: string}>,
- *     modifier?: StranglerModifierInterface|string|array<string, mixed>,
+ *     adapter?: StranglerAdapterInterface|string|array<string, mixed>,
  *     bodyIdentifier?: string,
  *     payloadReader?: callable(CController): array<array-key, mixed>,
  *     bypass?: callable(CController, string, array<array-key, mixed>): bool,
- *     afterRequest?: callable(string, string): void,
+ *     afterAttempt?: callable(string, string): void,
  *     bypassPayloadFields?: array<string, list<string>>
  * }
  */
@@ -55,11 +55,11 @@ final class Strangler
     }
 
     /**
-     * @param StranglerModifierInterface|string|array<string, mixed> $modifier
+     * @param StranglerAdapterInterface|string|array<string, mixed> $adapter
      */
-    public function usingModifier(StranglerModifierInterface|string|array $modifier): self
+    public function usingAdapter(StranglerAdapterInterface|string|array $adapter): self
     {
-        $this->config['modifier'] = $modifier;
+        $this->config['adapter'] = $adapter;
 
         return $this;
     }
@@ -85,11 +85,13 @@ final class Strangler
     }
 
     /**
+     * Run after each transport attempt, before translating the response, including failures.
+     *
      * @param callable(string, string): void $callback
      */
-    public function afterRequest(callable $callback): self
+    public function afterAttempt(callable $callback): self
     {
-        $this->config['afterRequest'] = $callback;
+        $this->config['afterAttempt'] = $callback;
 
         return $this;
     }
@@ -184,6 +186,10 @@ final class Strangler
         }
         if ($action === '' || $path === '') {
             throw new InvalidArgumentException('Strangler routes require an action and path.');
+        }
+
+        if (! str_starts_with($path, '/') || str_starts_with($path, '//')) {
+            throw new InvalidArgumentException('Strangler routes require one leading slash.');
         }
 
         $this->routes[$key] = ['method' => $method, 'path' => $path];

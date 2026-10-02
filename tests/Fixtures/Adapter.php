@@ -4,9 +4,9 @@ declare(strict_types=1);
 
 namespace Cosmira\Strangler\Tests\Fixtures;
 
-use Cosmira\Strangler\StranglerModifierInterface;
+use Cosmira\Strangler\StranglerAdapterInterface;
 
-final class Modifier implements StranglerModifierInterface
+final class Adapter implements StranglerAdapterInterface
 {
     public bool $transformed = false;
 

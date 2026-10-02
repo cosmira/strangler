@@ -6,10 +6,10 @@ namespace Cosmira\Strangler\Tests\Fixtures;
 
 use RuntimeException;
 
-final class ThrowingModifier
+final class ThrowingAdapter
 {
     public function __construct()
     {
-        throw new RuntimeException('modifier bug');
+        throw new RuntimeException('adapter bug');
     }
 }

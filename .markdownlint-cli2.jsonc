@@ -1,6 +1,6 @@
 {
   "globs": ["**/*.md"],
-  "ignores": ["vendor/**", "node_modules/**", "coverage/**", "coverage-html/**", "build/**"],
+  "ignores": ["vendor/**", ".tools/**", "node_modules/**", "coverage/**", "coverage-html/**", "build/**"],
   "config": {
     "MD013": {"line_length": 120, "code_blocks": false, "tables": false},
     "MD024": {"siblings_only": true}

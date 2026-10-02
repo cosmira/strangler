@@ -1,7 +1,7 @@
 # Adapting different API contracts
 
 Changing the destination URL is enough only when both APIs accept the same requests
-and return the same responses. When their contracts differ, provide a modifier that
+and return the same responses. When their contracts differ, provide an adapter that
 translates between them. The existing client continues using the legacy API.
 
 ```text
@@ -49,14 +49,14 @@ adapt them to your application's validated input and backend response schema.
 
 ## 2. Implement the translations
 
-Create an application-owned **API contract adapter**. `AbstractStranglerModifier`
+Create an application-owned **API contract adapter**. `AbstractStranglerAdapter`
 implements unchanged query, payload and response behavior; override the methods
-your contract needs. It implements the existing `StranglerModifierInterface`:
+your contract needs. It implements `StranglerAdapterInterface`:
 
 ```php
-use Cosmira\Strangler\AbstractStranglerModifier;
+use Cosmira\Strangler\AbstractStranglerAdapter;
 
-final class CatalogApiModifier extends AbstractStranglerModifier
+final class CatalogApiAdapter extends AbstractStranglerAdapter
 {
     public function transformQuery(string $actionId, array $query): array
     {
@@ -84,7 +84,7 @@ final class CatalogApiModifier extends AbstractStranglerModifier
                 'title' => $payload['NAME'],
                 'enabled' => (bool) $payload['ACTIVE'],
             ],
-            'category' => ['id' => (int) $payload['CATEGORY_ID']],
+            'category' => ['id' => $payload['CATEGORY_ID']],
         ];
     }
 
@@ -99,7 +99,14 @@ final class CatalogApiModifier extends AbstractStranglerModifier
             return ['status' => $status, 'body' => $body, 'headers' => $headers];
         }
 
-        $response = json_decode($body, true, 512, JSON_THROW_ON_ERROR);
+        $response = json_decode($body, true, 512, JSON_THROW_ON_ERROR | JSON_BIGINT_AS_STRING);
+        if (!is_array($response)) {
+            throw new UnexpectedValueException('The catalog API must return a JSON object.');
+        }
+        if ($status < 400 && (!isset($response['data']) || !is_array($response['data'])
+            || ($actionId === 'get' && !isset($response['meta']['total'])))) {
+            throw new UnexpectedValueException('The catalog API returned an unexpected schema.');
+        }
         if ($status >= 400) {
             $legacy = [
                 'success' => false,
@@ -118,7 +125,14 @@ final class CatalogApiModifier extends AbstractStranglerModifier
             $legacy = ['success' => true, 'data' => $this->legacyItem($response['data'])];
         }
 
-        $headers = ['Content-Type' => ['application/json; charset=utf-8']];
+        // Keep only metadata that remains valid after rewriting the body.
+        $preserved = [];
+        foreach ($headers as $name => $values) {
+            if (in_array(strtolower($name), ['x-request-id', 'retry-after', 'x-ratelimit-remaining'], true)) {
+                $preserved[$name] = $values;
+            }
+        }
+        $headers = ['Content-Type' => ['application/json; charset=utf-8']] + $preserved;
 
         return [
             'status' => $status,
@@ -129,6 +143,10 @@ final class CatalogApiModifier extends AbstractStranglerModifier
 
     private function legacyItem(array $item): array
     {
+        if (!isset($item['id'], $item['title'], $item['enabled'], $item['category']['id'])) {
+            throw new UnexpectedValueException('The catalog API returned an incomplete item.');
+        }
+
         return [
             'ID' => $item['id'],
             'NAME' => $item['title'],
@@ -154,7 +172,12 @@ Each method has a distinct purpose:
 For the list action, the example expects the backend to return
 `{"data":[...],"meta":{"total":123}}` and returns
 `{"success":true,"rows":[...],"total":123}` to the legacy client.
-Action names passed to the modifier are lowercase: `get`, `create`, `update`.
+Action names passed to the adapter are lowercase: `get`, `create`, `update`.
+Without an adapter or custom payload reader, write bodies retain their original JSON
+bytes, including empty objects and large integers. With an adapter, payloads are PHP
+arrays: empty objects become arrays and integers beyond PHP's range become strings.
+Your adapter owns the new JSON shape; use string identifiers in both contracts when
+numeric precision matters. The example also reads large backend integers as strings.
 
 The pagination conversion is exact when `start` is a multiple of `limit`. The bypass
 rule below keeps other offsets in Yii **before any upstream request**, so the example
@@ -175,18 +198,23 @@ The same method maps backend errors and package-generated errors. For example:
 The status remains an error. Invalid JSON or missing path parameters produce a `400`
 through this response adapter too. If the configured adapter cannot be created,
 Strangler returns its own configuration error because there is no adapter to call.
-Malformed backend JSON or a bug in your adapter reaches Yii's application error
-handler; test that scenario. Do not report failures as success or replay failed writes.
+Malformed backend JSON, the unexpected schema rejected above, or a bug in your
+adapter reaches Yii's application error handler. Configure that handler to emit the
+legacy JSON error envelope, a `500` status and `Content-Type: application/json` for
+API requests; it must not render Yii's HTML error page or expose exception details.
+Exercise this through the real API with HTML, scalar JSON, missing `data` and a
+throwing adapter. The catalog example rejects invalid responses; the host owns the
+client error format. Do not report failures as success or replay failed writes.
 
-## 3. Connect the modifier and routes
+## 3. Connect the adapter and routes
 
-Make the modifier available through your application's autoloading. In the controller
+Make the adapter available through your application's autoloading. In the controller
 from [Getting started](../README.md#getting-started), replace the Strangler filter entry
 with this configuration, keeping it **last**, after the existing security checks:
 
 ```php
 Strangler::proxy('catalog')
-    ->usingModifier(new CatalogApiModifier())
+    ->usingAdapter(new CatalogApiAdapter())
     ->bodyIdentifier('ID')
     ->bypassUsing(static function (CController $controller, string $actionId, array $query): bool {
         $limit = max(1, (int) ($query['limit'] ?? 20));
@@ -200,6 +228,18 @@ Strangler::proxy('catalog')
     ->build()
 ```
 
+An instance is simplest when dependencies are already constructed. Yii can also
+create a no-argument adapter class or apply public property configuration:
+
+```php
+->usingAdapter(CatalogApiAdapter::class)
+// For your own configurable adapter with a public $apiVersion property:
+->usingAdapter(['class' => VersionedCatalogAdapter::class, 'apiVersion' => 'v2'])
+```
+
+Choose one form. Make each class autoloadable and ensure it implements
+`StranglerAdapterInterface`; Yii configuration is not a dependency container.
+
 The first route argument names the **Yii action**; the second is the **new API path**.
 The builder method chooses the outgoing HTTP method. For example, `put('update', ...)`
 turns a legacy POST to `actionUpdate` into an upstream PUT.
@@ -209,7 +249,14 @@ has no `id` parameter. Strangler captures it before calling the adapter, so remo
 `ID` from the outgoing body still produces `/api/items/42`. The request's `id` takes
 precedence. Other placeholders use the translated body, then translated query, then
 original query, accepting lowercase or uppercase keys. Values are URL-encoded;
-unresolved parameters return `400` instead of sending an incomplete path.
+unresolved parameters and `.`/`..` values return `400` before contacting the backend.
+Paths must start with one `/`; absolute URLs and `//other-host` are rejected.
+Keep prefixes such as `/v2` in the route, not in `base_uri`.
+
+If both request `id` and body `ID` are provided, reject any mismatch in the
+preceding validation filter, **before its resource-access check**. Otherwise the
+access check and backend could refer to different items. See the
+[write-action validation example](integration.md#write-action-validation).
 
 Each Yii action can have one route; duplicate declarations are rejected. The builder
 also provides `patch()` and `head()`. These methods set the outgoing HTTP method,

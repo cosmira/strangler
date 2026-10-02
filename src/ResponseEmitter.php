@@ -40,9 +40,13 @@ final readonly class ResponseEmitter
      */
     public function send(int $status, string $body, array $headers, int $timeMs): void
     {
+        $written = [];
         foreach (HttpHeaders::response($headers) as $name => $values) {
+            $normalized = strtolower($name);
             foreach ($values as $value) {
-                ($this->writeHeader)(sprintf('%s: %s', $name, $value), false);
+                $replace = ! ($written[$normalized] ?? false);
+                ($this->writeHeader)(sprintf('%s: %s', $name, $value), $replace);
+                $written[$normalized] = true;
             }
         }
 

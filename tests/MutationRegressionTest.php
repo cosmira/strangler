@@ -8,7 +8,7 @@ use CController;
 use CLogger;
 use Cosmira\Strangler\ResponseEmitter;
 use Cosmira\Strangler\Strangler;
-use Cosmira\Strangler\StranglerModifierInterface;
+use Cosmira\Strangler\StranglerAdapterInterface;
 use Cosmira\Strangler\StranglerProxy;
 use Cosmira\Strangler\Tests\Fixtures\ApplicationEnded;
 use Cosmira\Strangler\Tests\Fixtures\Controller;
@@ -39,6 +39,11 @@ final class MutationRegressionTest extends TestCase
     {
         $_GET = [];
         $_POST = [];
+        foreach (array_keys($_SERVER) as $key) {
+            if (str_starts_with($key, 'HTTP_')) {
+                unset($_SERVER[$key]);
+            }
+        }
         $_SERVER['HTTP_HOST'] = 'legacy.test';
         $_SERVER['SCRIPT_FILENAME'] = __DIR__.'/bootstrap.php';
         $_SERVER['SCRIPT_NAME'] = '/index.php';
@@ -65,6 +70,11 @@ final class MutationRegressionTest extends TestCase
     public function testTransportFailureLogsTheNormalizedActionResolvedPathAndException(): void
     {
         $_GET = ['id' => 'a/b'];
+        $_SERVER['HTTP_X_REQUEST_ID'] = 'incoming-id';
+        StranglerProxy::application()->getParams()->add('strangler', [
+            'base_uri' => 'https://backend.test',
+            'headers'  => ['X-Request-Id' => 'server-id'],
+        ]);
         $config = Strangler::proxy('example')->get('get', '/api/items/{id}')->build()['config'];
         $failure = new ConnectException('Connection refused', new HttpRequest('GET', '/api/items/a%2Fb'));
         $proxy = new StranglerProxy($this->client([$failure]));
@@ -73,40 +83,48 @@ final class MutationRegressionTest extends TestCase
 
         self::assertSame('{"state":"error","error":"service_temporarily_unavailable"}', $body);
         $this->assertLog(
-            'Strangler request failed | action: get | path: /api/items/a%2Fb | error: Connection refused',
+            'Strangler request failed | feature: example | request_id: server-id'
+                .' | action: get | path: /api/items/a%2Fb | error: Connection refused',
             CLogger::LEVEL_ERROR,
         );
     }
 
-    /** @param array<string, mixed> $modifier */
-    #[DataProvider('invalidModifierLogs')]
-    public function testInvalidModifierLogsAnActionableWarning(array $modifier, string $message): void
+    /** @param array<string, mixed> $adapter */
+    #[DataProvider('invalidAdapterLogs')]
+    public function testInvalidAdapterLogsAnActionableWarning(array $adapter, string $message): void
     {
-        $config = Strangler::proxy('example')->usingModifier($modifier)->get('get', '/api/items')->build()['config'];
+        $config = Strangler::proxy('example')->usingAdapter($adapter)->get('get', '/api/items')->build()['config'];
         $proxy = new StranglerProxy($this->client([]));
 
         self::assertSame(
-            '{"state":"error","error":"strangler_modifier_not_configured"}',
+            '{"state":"error","error":"strangler_adapter_not_configured"}',
             $this->capture(fn () => $proxy->handle($this->controller, $config, 'get')),
         );
-        $this->assertLog($message, CLogger::LEVEL_WARNING);
+        $this->assertLog($message, CLogger::LEVEL_WARNING, 2);
+        $logs = $this->logger->getLogs();
+        self::assertIsArray($logs[1]);
+        self::assertSame([
+            'Strangler request rejected | feature: example | action: get | path: /api/items'
+                .' | error: strangler_adapter_not_configured | request_id: ',
+            CLogger::LEVEL_WARNING, 'strangler',
+        ], array_slice($logs[1], 0, 3));
     }
 
     /** @return list<array{array<string, mixed>, string}> */
-    public static function invalidModifierLogs(): array
+    public static function invalidAdapterLogs(): array
     {
         return [
-            [['unexpected' => true], 'Strangler modifier config must contain class'],
-            [['class' => 7], 'Strangler modifier config must contain class'],
-            [['class' => \stdClass::class], 'Strangler modifier must implement StranglerModifierInterface: stdClass'],
-            [['class' => 'missing.Component'], 'Strangler modifier could not be created: missing.Component | error: Alias "missing.Component" is invalid. Make sure it points to an existing directory or file.'],
+            [['unexpected' => true], 'Strangler adapter config must contain class'],
+            [['class' => 7], 'Strangler adapter config must contain class'],
+            [['class' => \stdClass::class], 'Strangler adapter must implement StranglerAdapterInterface: stdClass'],
+            [['class' => 'missing.Component'], 'Strangler adapter could not be created: missing.Component | error: Alias "missing.Component" is invalid. Make sure it points to an existing directory or file.'],
         ];
     }
 
-    public function testAllModifierCallbacksReceiveNormalizedActionAndOriginalDataInOrder(): void
+    public function testAllAdapterCallbacksReceiveNormalizedActionAndOriginalDataInOrder(): void
     {
         $_GET = ['r' => 'example/update', 'filter' => ['name' => 'Alice']];
-        $modifier = new class implements StranglerModifierInterface
+        $adapter = new class implements StranglerAdapterInterface
         {
             /** @var list<array<array-key, mixed>> */
             public array $calls = [];
@@ -133,7 +151,7 @@ final class MutationRegressionTest extends TestCase
             }
         };
         $receivedController = null;
-        $config = Strangler::proxy('example')->usingModifier($modifier)
+        $config = Strangler::proxy('example')->usingAdapter($adapter)
             ->payloadUsing(static function (CController $controller) use (&$receivedController): array {
                 $receivedController = $controller;
 
@@ -157,15 +175,15 @@ final class MutationRegressionTest extends TestCase
             ['query', 'update', ['filter' => ['name' => 'Alice']]],
             ['payload', 'update', ['name' => 'original']],
             ['response', 'update', 201, 'original', ['X-Upstream' => ['before']]],
-        ], $modifier->calls);
+        ], $adapter->calls);
         self::assertSame(202, $status);
-        self::assertSame([['X-Mapped: one', false], ['X-Mapped: two', false], ['X-Strangler: 1', true]], $headers);
+        self::assertSame([['X-Mapped: one', true], ['X-Mapped: two', false], ['X-Strangler: 1', true]], $headers);
     }
 
-    private function assertLog(string $message, string $level): void
+    private function assertLog(string $message, string $level, int $count = 1): void
     {
         $logs = $this->logger->getLogs();
-        self::assertCount(1, $logs);
+        self::assertCount($count, $logs);
         $log = $logs[0];
         self::assertIsArray($log);
         self::assertSame([$message, $level, 'strangler'], array_slice($log, 0, 3));
@@ -197,6 +215,34 @@ final class MutationRegressionTest extends TestCase
 
         self::assertSame('body', $this->capture(fn () => $proxy->handle($this->controller, $config, 'get')));
         self::assertSame([], $this->logger->getLogs());
+    }
+
+    #[DataProvider('rejectedRequests')]
+    public function testRejectedRequestsLogFeaturePathErrorAndForwardedCorrelationId(
+        string $path,
+        string $origin,
+        string $error,
+    ): void {
+        $_SERVER['HTTP_X_REQUEST_ID'] = 'request-42';
+        StranglerProxy::application()->getParams()->add('strangler', ['base_uri' => $origin]);
+        $config = Strangler::proxy('example')->get('get', $path)->build()['config'];
+        $proxy = new StranglerProxy($this->client([]));
+        $this->capture(fn () => $proxy->handle($this->controller, $config, 'GeT'));
+
+        $this->assertLog(
+            'Strangler request rejected | feature: example | action: get | path: '.$path
+                .' | error: '.$error.' | request_id: request-42',
+            CLogger::LEVEL_WARNING,
+        );
+    }
+
+    /** @return list<array{string, string, string}> */
+    public static function rejectedRequests(): array
+    {
+        return [
+            ['/items/{id}', 'https://backend.test', 'strangler_route_parameter_missing'],
+            ['/items', '', 'strangler_not_configured'],
+        ];
     }
 
     /** @param list<Response|ConnectException> $responses */

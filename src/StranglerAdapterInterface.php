@@ -4,30 +4,21 @@ declare(strict_types=1);
 
 namespace Cosmira\Strangler;
 
-/**
- * Extend this adapter when only part of the API contract needs translation.
- */
-abstract class AbstractStranglerModifier implements StranglerModifierInterface
+interface StranglerAdapterInterface
 {
     /**
      * @param array<array-key, mixed> $query
      *
      * @return array<array-key, mixed>
      */
-    public function transformQuery(string $actionId, array $query): array
-    {
-        return $query;
-    }
+    public function transformQuery(string $actionId, array $query): array;
 
     /**
      * @param array<array-key, mixed> $payload
      *
      * @return array<array-key, mixed>
      */
-    public function transformPayload(string $actionId, array $payload): array
-    {
-        return $payload;
-    }
+    public function transformPayload(string $actionId, array $payload): array;
 
     /**
      * @param array<string, array<string>> $headers
@@ -39,7 +30,5 @@ abstract class AbstractStranglerModifier implements StranglerModifierInterface
         int $status,
         string $body,
         array $headers,
-    ): array {
-        return ['status' => $status, 'body' => $body, 'headers' => $headers];
-    }
+    ): array;
 }

@@ -20,6 +20,104 @@ Strangler does not infer resource permissions from `X-User-Id`. Decide which che
 remain in Yii and which business invariants the new backend must enforce. A public
 Yii action may forward a guest request; its user identifier is an empty string.
 
+## Write-action validation
+
+For the catalog contract, the incoming update is POST even though its outgoing
+route uses PUT. A preceding filter can enforce this and reject conflicting IDs:
+
+```php
+public function filterValidateCatalog(CFilterChain $chain): void
+{
+    $action = strtolower($chain->action->getId());
+    $expected = ['get' => 'GET', 'create' => 'POST', 'update' => 'POST'];
+    $request = Yii::app()->request;
+    if (isset($expected[$action]) && $request->getRequestType() !== $expected[$action]) {
+        throw new CHttpException(405, 'Method not allowed.');
+    }
+
+    if ($action === 'update') {
+        // Use the same validated input as payloadUsing() if you accept form fields.
+        $body = $request->getRawBody();
+        try {
+            $payload = json_decode($body, true, 512, JSON_THROW_ON_ERROR | JSON_BIGINT_AS_STRING);
+        } catch (JsonException) {
+            throw new CHttpException(400, 'Invalid JSON.');
+        }
+        if (!is_array($payload)) {
+            throw new CHttpException(400, 'Expected a JSON object.');
+        }
+        $requestId = $request->getParam('id');
+        $bodyId = $payload['ID'] ?? null;
+        if (($requestId !== null && !is_scalar($requestId))
+            || ($bodyId !== null && !is_scalar($bodyId))) {
+            throw new CHttpException(400, 'Invalid identifier.');
+        }
+        if ($requestId !== null && $bodyId !== null && (string) $requestId !== (string) $bodyId) {
+            throw new CHttpException(400, 'Conflicting identifiers.');
+        }
+        // Validate required fields and access to this same ID in your application.
+    }
+    $chain->run();
+}
+```
+
+Place `validateCatalog` before your resource-access filter and Strangler. Keep
+session-authenticated write CSRF checks there too: use your application's existing
+validated token/header contract. Enabling a Strangler route does not add those
+checks. Errors thrown by these filters use the host's API error handler.
+
+For cleanup that must run for both executors, register a request-end callback during
+application bootstrap, rather than relying on `afterAction()` or `postFilter()`:
+
+```php
+Yii::app()->attachEventHandler('onEndRequest', static function (CEvent $event): void {
+    // Release application-owned request resources; keep this safe to call once.
+});
+```
+
+Use a real HTTP request to verify that your cleanup runs on a proxied response,
+legacy response and denied request. Do not keep uncommitted transactions open
+across a backend call; an end hook is not distributed transaction coordination.
+
+## API errors from Yii
+
+For API controllers, configure an application-owned error action so adapter bugs and
+invalid backend responses keep the legacy JSON error contract. In Yii configuration:
+
+```php
+'components' => [
+    'errorHandler' => ['errorAction' => 'apiError/error'],
+],
+```
+
+Create `ApiErrorController` in your application's controller directory:
+
+```php
+class ApiErrorController extends CController
+{
+    public function actionError(): void
+    {
+        $error = Yii::app()->errorHandler->error;
+        $status = $error['code'] ?? 500;
+        header('Content-Type: application/json; charset=utf-8', true, $status);
+        echo json_encode([
+            'success' => false,
+            'error' => [
+                'code' => $status >= 500 ? 'internal_error' : 'request_rejected',
+                'fields' => [],
+            ],
+        ], JSON_THROW_ON_ERROR);
+    }
+}
+```
+
+Use this route for your API requests; preserve an appropriate HTML error action for
+browser pages if the application serves both. The error action must be reachable
+without repeating the failing filters. Run production with `YII_DEBUG=false`, because
+Yii debug exception rendering bypasses its configured error action. Keep exception
+details in server logs. Test malformed backend JSON and a throwing adapter: both
+must return `500` JSON without a second backend or legacy execution.
+
 ## Trusted channel
 
 The backend must accept identity headers only from your Yii application. A private
@@ -79,11 +177,45 @@ A client's `X-Strangler-Token` is discarded; only the server configuration suppl
 it. The diagnostic `X-Strangler: 1` must never authorize a request. Rotate the token
 through your deployment process; keep it out of repositories and request logs.
 
+## Configuration reference
+
+All settings below belong to `params.strangler`; feature names match
+`Strangler::proxy('catalog')`. Keep environment parsing in your application's
+configuration bootstrap.
+
+| Setting | Default | Contract |
+| --- | --- | --- |
+| `base_uri` | Missing: handled request returns `500` | One HTTP(S) origin, e.g. `https://backend.example:8443`. No credentials, path prefix, query or fragment. Put `/v2` in route paths. |
+| `features` | `[]` | Map of feature names to boolean flags; only `true` forwards. |
+| `headers` | `[]` | Server-owned string headers, including the trusted token. Override forwarded client values; no invalid names or newlines. |
+| `forward_headers` | `['Accept-Language', 'X-Request-Id', 'Idempotency-Key']` | Explicit client-header allowlist. Reserved identity/token and transport headers remain blocked. |
+| `timeout` | `10` | Positive finite seconds for the full request. Invalid values use the default. |
+| `connect_timeout` | `3` | Positive finite seconds for connecting. Invalid values use the default. |
+| `verify_ssl` | `true` | Boolean or absolute CA-bundle path. Use `false` only deliberately for local development. |
+| `log_requests` | `false` | Enable forwarding logs; `YII_DEBUG` also enables them. |
+
+Routes must start with one `/` and cannot change the origin. Redirects are always
+returned to the client; there is no redirect-following option. The filter never
+retries a backend request.
+
+The controller builder configures behavior for one feature:
+
+| Method | Purpose |
+| --- | --- |
+| `get/post/put/patch/delete/head($action, $path)` | Map one Yii action to an outgoing method/path. Each action may appear once. |
+| `usingAdapter($adapter)` | Supply a `StranglerAdapterInterface` instance, autoloadable class name, or Yii `['class' => ..., ...]` configuration. |
+| `payloadUsing($reader)` | Read a validated legacy body as an array, once per handled request. |
+| `bodyIdentifier($field)` | Set the original-body fallback field for `{id}`; disabled by default. Request `id` takes precedence. |
+| `bypassUsing($callback)` | Decide before reading/forwarding payload, from controller, lowercase action and original query. `true` keeps Yii. |
+| `bypassWhenPayloadHas($action, $fields)` | Keep Yii if any named original-payload field is present, including `null`. |
+| `afterAttempt($callback)` | Observe outgoing method/path after a transport attempt, before response adaptation. |
+| `build()` | Return the native Yii filter configuration. |
+
 ## Headers, TLS and payloads
 
 By default, only `Accept-Language`, `X-Request-Id` and `Idempotency-Key` are forwarded
-from clients. Set `forward_headers` to the additional business headers your API
-requires. `headers` contains server-owned values, which override forwarded values.
+from clients. Set `forward_headers` to the complete allowlist your API requires,
+including those defaults if you still need them. `headers` contains server-owned values, which override forwarded values.
 Client identity, marker, locale and token headers are never forwarded, even if listed;
 transport-specific headers are excluded too.
 
@@ -102,6 +234,11 @@ values are in seconds; invalid values, including zero, use the defaults of 10 an
 
 The default payload reader accepts a JSON object or array. An empty body means no
 payload; malformed JSON, `null` and scalar JSON return `400` before forwarding.
+This validation applies to every mapped action, including GET and HEAD: their bodies
+can supply route or bypass fields but are not sent upstream. Do not send irrelevant
+bodies on read requests. Without an adapter or custom reader, write JSON bytes are
+preserved. Adapters receive PHP arrays with large integers represented as strings;
+they own the re-encoded object's shape, including empty objects.
 `payloadUsing()` reads form fields explicitly and must return an array; validate its
 structure in the preceding filters. The filter uses one payload snapshot for the
 bypass decision and forwarding. File uploads and arbitrary raw bodies are outside
@@ -127,10 +264,8 @@ Requests are never automatically retried or replayed in Yii. Forwarded
 `Idempotency-Key` works only if the backend defines and enforces that contract;
 the package does not deduplicate operations by itself.
 
-For repeatable deployments, check out the reviewed package commit, retain the
-application's `composer.lock`, and run `composer install`. A local path repository
-must point to that same checkout when Composer installs it. A branch name alone
-is not a fixed deployment version.
+For repeatable deployments, retain the application's `composer.lock` and run
+`composer install`. Deploy the reviewed dependency versions and configuration.
 
 ## Logging and callbacks
 
@@ -153,10 +288,27 @@ does not already collect the category:
 
 If a request stays in Yii, check the feature's boolean value, its mapped action and
 configured bypass conditions. Use your existing `X-Request-Id` to correlate systems;
-Strangler forwards it but does not create a new correlation service.
+Strangler forwards a valid single-line value and includes it with the feature in
+its logs. It does not create a new correlation service. Configuration and path
+failures are logged as warnings; payloads and tokens are not logged.
 
-The optional `afterRequest($method, $path)` callback runs after a transport attempt,
+The optional `afterAttempt($method, $path)` callback runs after a transport attempt,
 including failure, **before response mapping**. It does not receive the final client
 response. Keep it small: a thrown callback or adapter exception reaches Yii's error
 handler and can prevent delivery of a response even after a successful backend
 write. Test these hooks and never replay writes to compensate for their errors.
+
+## Local development
+
+To work on the package beside a Yii application, clone the repository and add a
+Composer path repository:
+
+```shell
+git clone https://github.com/cosmira/yii1-strangler-proxy.git ../yii1-strangler-proxy
+composer config repositories.yii1-strangler-proxy path ../yii1-strangler-proxy
+composer require cosmira/yii1-strangler-proxy:dev-main
+```
+
+A path repository is for development; deploy the tagged VCS dependency and the
+application's lock file. If you deploy a path checkout, pin its reviewed commit
+explicitly and ensure that exact checkout is present during installation.

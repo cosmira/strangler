@@ -1,15 +1,18 @@
 {
-    "name": "cosmira/strangler",
-    "description": "A Strangler Fig adapter for incrementally replacing legacy Yii applications with modern HTTP backends.",
+    "name": "cosmira/yii1-strangler-proxy",
+    "description": "A Yii 1.1 filter for incremental JSON API migration with contract adaptation and legacy access checks.",
     "keywords": [
         "strangler",
         "strangler-fig",
         "legacy",
         "incremental-migration",
         "yii",
-        "proxy"
+        "proxy",
+        "yii1",
+        "yii-1.1",
+        "api-migration"
     ],
-    "homepage": "https://github.com/cosmira/strangler",
+    "homepage": "https://github.com/cosmira/yii1-strangler-proxy",
     "type": "library",
     "license": "MIT",
     "authors": [
@@ -21,8 +24,8 @@
         }
     ],
     "support": {
-        "issues": "https://github.com/cosmira/strangler/issues",
-        "source": "https://github.com/cosmira/strangler"
+        "issues": "https://github.com/cosmira/yii1-strangler-proxy/issues",
+        "source": "https://github.com/cosmira/yii1-strangler-proxy"
     },
     "require": {
         "php": "^8.2",
