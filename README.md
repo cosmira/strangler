@@ -1,4 +1,4 @@
-# Strangler
+# Yii Strangler
 
 A Composer package for forwarding selected Yii 1.1 controller actions to another
 HTTP backend while the remaining actions continue running in Yii.
