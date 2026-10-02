@@ -1,0 +1,30 @@
+{
+    "name": "cosmira/strangler",
+    "description": "A Yii 1.1 filter for gradually forwarding application routes to another HTTP backend.",
+    "type": "library",
+    "license": "MIT",
+    "require": {
+        "php": "^8.1",
+        "guzzlehttp/guzzle": "^7.7",
+        "yiisoft/yii": "^1.1.31"
+    },
+    "require-dev": {
+        "phpunit/phpunit": "^10.5"
+    },
+    "autoload": {
+        "psr-4": {
+            "Cosmira\\Strangler\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Cosmira\\Strangler\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "phpunit"
+    },
+    "config": {
+        "sort-packages": true
+    }
+}
