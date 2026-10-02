@@ -46,7 +46,10 @@ final class ResponseEmitterTest extends TestCase
 
         $body = $this->capture(static fn () => $emitter->send(207, 'response body', [
             'Set-Cookie'        => ['first=1', 'second=2'],
-            'X-Upstream'        => ['yes'],
+            'X-Upstream'        => ['first', 'second'],
+            'Connection'        => ['keep-alive, X-Internal'],
+            'X-Internal'        => ['transport-only'],
+            'Keep-Alive'        => ['timeout=5'],
             'cOnTeNt-LeNgTh'    => ['999'],
             'TRANSFER-ENCODING' => ['chunked'],
             'X-Strangler'       => ['upstream-marker'],
@@ -54,9 +57,8 @@ final class ResponseEmitterTest extends TestCase
 
         self::assertSame('response body', $body);
         self::assertSame([
-            ['header', 'Set-Cookie: first=1', false],
-            ['header', 'Set-Cookie: second=2', false],
-            ['header', 'X-Upstream: yes', false],
+            ['header', 'X-Upstream: first', false],
+            ['header', 'X-Upstream: second', false],
             ['header', 'X-Strangler: upstream-marker', false],
             ['header', 'X-Strangler: 1', true],
             ['status', 207, null],

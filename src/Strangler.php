@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace Cosmira\Strangler;
 
 use CController;
+use InvalidArgumentException;
 
 /**
  * Build the Yii filter configuration for migrated actions.
@@ -146,6 +147,22 @@ final class Strangler
     }
 
     /**
+     * Map a legacy action to an upstream PATCH route.
+     */
+    public function patch(string $action, string $path): self
+    {
+        return $this->route($action, 'PATCH', $path);
+    }
+
+    /**
+     * Map a legacy action to an upstream HEAD route.
+     */
+    public function head(string $action, string $path): self
+    {
+        return $this->route($action, 'HEAD', $path);
+    }
+
+    /**
      * @return array{0: class-string<StranglerFilter>, config: Config}
      */
     public function build(): array
@@ -161,7 +178,15 @@ final class Strangler
      */
     private function route(string $action, string $method, string $path): self
     {
-        $this->routes[strtolower($action)] = ['method' => $method, 'path' => $path];
+        $key = strtolower($action);
+        if (isset($this->routes[$key])) {
+            throw new InvalidArgumentException('Duplicate Strangler action: '.$action);
+        }
+        if ($action === '' || $path === '') {
+            throw new InvalidArgumentException('Strangler routes require an action and path.');
+        }
+
+        $this->routes[$key] = ['method' => $method, 'path' => $path];
 
         return $this;
     }

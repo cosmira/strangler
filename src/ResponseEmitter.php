@@ -40,12 +40,7 @@ final readonly class ResponseEmitter
      */
     public function send(int $status, string $body, array $headers, int $timeMs): void
     {
-        foreach ($headers as $name => $values) {
-            $headerName = strtolower($name);
-            if (in_array($headerName, ['transfer-encoding', 'content-length'], true)) {
-                continue;
-            }
-
+        foreach (HttpHeaders::response($headers) as $name => $values) {
             foreach ($values as $value) {
                 ($this->writeHeader)(sprintf('%s: %s', $name, $value), false);
             }

@@ -62,7 +62,7 @@ final class MutationRegressionTest extends TestCase
         $this->controller = new Controller('example');
     }
 
-    public function testTransportFailureLogsTheOriginalActionResolvedPathAndException(): void
+    public function testTransportFailureLogsTheNormalizedActionResolvedPathAndException(): void
     {
         $_GET = ['id' => 'a/b'];
         $config = Strangler::proxy('example')->get('get', '/api/items/{id}')->build()['config'];
@@ -73,7 +73,7 @@ final class MutationRegressionTest extends TestCase
 
         self::assertSame('{"state":"error","error":"service_temporarily_unavailable"}', $body);
         $this->assertLog(
-            'Strangler request failed | action: GeT | path: /api/items/a%2Fb | error: Connection refused',
+            'Strangler request failed | action: get | path: /api/items/a%2Fb | error: Connection refused',
             CLogger::LEVEL_ERROR,
         );
     }

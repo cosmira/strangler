@@ -13,6 +13,8 @@ use GuzzleHttp\Client;
 use GuzzleHttp\ClientInterface;
 use GuzzleHttp\Exception\GuzzleException;
 use GuzzleHttp\RequestOptions;
+use InvalidArgumentException;
+use JsonException;
 use LogicException;
 use Yii;
 
@@ -64,12 +66,14 @@ final readonly class StranglerProxy
     }
 
     /**
-     * @param Config $config
+     * @param Config                       $config
+     * @param array<array-key, mixed>|null $payload
      */
     public static function shouldBypass(
         CController $controller,
         array $config,
         string $actionId,
+        ?array $payload = null,
     ): bool {
         $actionKey = self::normalizeActionKey($actionId);
         $bypass = $config['bypass'] ?? null;
@@ -83,7 +87,7 @@ final readonly class StranglerProxy
             return false;
         }
 
-        $payload = self::readPayload($controller, $config);
+        $payload ??= self::readPayload($controller, $config);
 
         foreach ($fields as $field) {
             if (array_key_exists($field, $payload)) {
@@ -97,40 +101,62 @@ final readonly class StranglerProxy
     /**
      * @param Config $config
      */
-    public function handle(CController $controller, array $config, string $actionId): void
+    public function handle(CController $controller, array $config, string $actionId): bool
     {
         $actionKey = self::normalizeActionKey($actionId);
         $routes = $config['routes'] ?? [];
         $route = $routes[$actionKey] ?? null;
 
         if ($route === null) {
-            return;
+            return false;
         }
 
-        $settings = self::settings();
-        $baseUri = self::baseUri($settings);
-
-        if ($baseUri === '') {
-            $this->sendError(500, 'strangler_not_configured');
-
-            return;
+        $bypass = $config['bypass'] ?? null;
+        if ($bypass !== null && $bypass($controller, $actionKey, $_GET)) {
+            return false;
         }
-
-        $request = self::application()->getRequest();
-        $startedAt = ($this->clock)();
+        unset($config['bypass']);
 
         $modifierConfig = $config['modifier'] ?? null;
         $modifier = self::resolveModifier($modifierConfig);
         if ($modifier === null && self::hasModifierConfig($modifierConfig)) {
             $this->sendError(500, 'strangler_modifier_not_configured');
 
-            return;
+            return true;
         }
 
+        return $this->forward($controller, $config, $actionKey, $route, $modifier);
+    }
+
+    /**
+     * Prepare one payload snapshot and resolve the upstream route before sending.
+     *
+     * @param Config                              $config
+     * @param array{method: string, path: string} $route
+     */
+    private function forward(
+        CController $controller,
+        array $config,
+        string $actionKey,
+        array $route,
+        ?StranglerModifierInterface $modifier,
+    ): bool {
+        try {
+            $payload = self::readPayload($controller, $config);
+        } catch (JsonException) {
+            $this->sendError(400, 'strangler_invalid_payload', $modifier, $actionKey);
+
+            return true;
+        }
+
+        if (self::shouldBypass($controller, $config, $actionKey, $payload)) {
+            return false;
+        }
+
+        $request = self::application()->getRequest();
         $query = $_GET;
         unset($query['r']);
 
-        $payload = self::readPayload($controller, $config);
         $routeId = self::routeIdentifier($request->getParam('id'), $payload, $config);
         $forwardPayload = $payload;
         $forwardQuery = $query;
@@ -140,13 +166,62 @@ final readonly class StranglerProxy
             $forwardPayload = $modifier->transformPayload($actionKey, $forwardPayload);
         }
 
-        $path = self::resolvePath($route['path'], $query, $forwardPayload, $routeId);
-        $method = strtoupper($route['method']);
+        try {
+            $pathQuery = array_replace(
+                array_change_key_case($query),
+                array_change_key_case($forwardQuery),
+            );
+            $path = self::resolvePath($route['path'], $pathQuery, $forwardPayload, $routeId);
+        } catch (InvalidArgumentException) {
+            $this->sendError(400, 'strangler_route_parameter_missing', $modifier, $actionKey);
+
+            return true;
+        }
+        $outgoing = [
+            'method'  => strtoupper($route['method']),
+            'path'    => $path,
+            'query'   => $forwardQuery,
+            'payload' => $forwardPayload,
+        ];
+        $this->dispatch($config, $actionKey, $outgoing, $modifier);
+
+        return true;
+    }
+
+    /**
+     * Send one upstream attempt and translate its response.
+     *
+     * @param Config $config
+     * @param array{method: string, path: string, query: array<array-key, mixed>,
+     *     payload: array<array-key, mixed>} $outgoing
+     */
+    private function dispatch(
+        array $config,
+        string $actionKey,
+        array $outgoing,
+        ?StranglerModifierInterface $modifier,
+    ): void {
+        $settings = self::settings();
+        $baseUri = self::baseUri($settings);
+        if ($baseUri === '') {
+            $this->sendError(500, 'strangler_not_configured', $modifier, $actionKey);
+
+            return;
+        }
+
+        $method = $outgoing['method'];
+        $path = $outgoing['path'];
+        $startedAt = ($this->clock)();
 
         try {
             $client = $this->client ?? new Client();
 
-            $options = self::requestOptions($settings, $method, $forwardQuery, $forwardPayload);
+            $options = self::requestOptions(
+                $settings,
+                $method,
+                $outgoing['query'],
+                $outgoing['payload'],
+            );
             $response = $client->request($method, $path, $options);
         } catch (GuzzleException $exception) {
             self::afterRequest($config, $method, $path);
@@ -154,7 +229,7 @@ final readonly class StranglerProxy
             Yii::log(
                 sprintf(
                     'Strangler request failed | action: %s | path: %s | error: %s',
-                    $actionId,
+                    $actionKey,
                     $path,
                     $exception->getMessage(),
                 ),
@@ -162,7 +237,7 @@ final readonly class StranglerProxy
                 'strangler',
             );
 
-            $this->sendError(503, 'service_temporarily_unavailable');
+            $this->sendError(503, 'service_temporarily_unavailable', $modifier, $actionKey);
 
             return;
         }
@@ -192,7 +267,7 @@ final readonly class StranglerProxy
             'Strangler request proxied | feature: %s | action: %s | method: %s'
                 .' | base_uri: %s | path: %s | status: %s | time_ms: %s',
             (string) ($config['feature'] ?? ''),
-            $actionId,
+            $actionKey,
             $method,
             $baseUri,
             $path,
@@ -206,6 +281,7 @@ final readonly class StranglerProxy
             $responseHeaders,
             $timeMs,
         );
+
     }
 
     /**
@@ -221,7 +297,7 @@ final readonly class StranglerProxy
         array $query,
         array $payload,
     ): array {
-        $headers = array_merge(self::extractForwardHeaders(), [
+        $headers = array_merge(HttpHeaders::request($settings), [
             'X-User-Id'          => self::userId(),
             'X-Strangler'        => '1',
             'X-Strangler-Locale' => self::application()->getLanguage(),
@@ -234,7 +310,7 @@ final readonly class StranglerProxy
             'base_uri'                      => self::baseUri($settings),
             RequestOptions::HTTP_ERRORS     => false,
             RequestOptions::ALLOW_REDIRECTS => (bool) ($settings['allow_redirects'] ?? false),
-            RequestOptions::VERIFY          => (bool) ($settings['verify_ssl'] ?? false),
+            RequestOptions::VERIFY          => self::tlsVerification($settings),
             RequestOptions::TIMEOUT         => self::timeout($settings, 'timeout', 10),
             RequestOptions::CONNECT_TIMEOUT => self::timeout($settings, 'connect_timeout', 3),
         ];
@@ -267,9 +343,17 @@ final readonly class StranglerProxy
             return $reader($controller);
         }
 
-        $decoded = json_decode((string) self::application()->getRequest()->getRawBody(), true);
+        $body = self::application()->getRequest()->getRawBody();
+        if (trim($body) === '') {
+            return [];
+        }
 
-        return is_array($decoded) ? $decoded : [];
+        $decoded = json_decode($body, true, flags: JSON_THROW_ON_ERROR);
+        if (! is_array($decoded)) {
+            throw new JsonException('Strangler requires a JSON object or array.');
+        }
+
+        return $decoded;
     }
 
     /**
@@ -298,7 +382,7 @@ final readonly class StranglerProxy
             return false;
         }
 
-        return (bool) ($features[$feature] ?? false);
+        return ($features[$feature] ?? false) === true;
     }
 
     /**
@@ -425,10 +509,10 @@ final readonly class StranglerProxy
             }
 
             $value = $body[$placeholder] ?? $body[$upper]
-                ?? $query[$placeholder] ?? $query[$upper] ?? null;
+                ?? $query[strtolower($placeholder)] ?? null;
 
-            if (! is_scalar($value) || $value === '') {
-                return '';
+            if (! is_scalar($value) || (string) $value === '') {
+                throw new InvalidArgumentException('Missing Strangler route parameter.');
             }
 
             return rawurlencode((string) $value);
@@ -438,9 +522,22 @@ final readonly class StranglerProxy
     /**
      * Emit a JSON error and end the Yii request.
      */
-    private function sendError(int $status, string $code): void
-    {
-        $this->emitter->error($status, $code);
+    private function sendError(
+        int $status,
+        string $code,
+        ?StranglerModifierInterface $modifier = null,
+        string $actionId = '',
+    ): void {
+        if ($modifier === null) {
+            $this->emitter->error($status, $code);
+
+            return;
+        }
+
+        $body = json_encode(['state' => 'error', 'error' => $code], JSON_THROW_ON_ERROR);
+        $headers = ['Content-Type' => ['application/json; charset=utf-8']];
+        $response = $modifier->transformResponse($actionId, $status, $body, $headers);
+        $this->emitter->send($response['status'], $response['body'], $response['headers'], 0);
     }
 
     /**
@@ -457,35 +554,6 @@ final readonly class StranglerProxy
         }
 
         Yii::log($message, CLogger::LEVEL_INFO, 'strangler');
-    }
-
-    /**
-     * @return array<string, string>
-     */
-    private static function extractForwardHeaders(): array
-    {
-        $result = [];
-        foreach ($_SERVER as $key => $value) {
-            if (! str_starts_with($key, 'HTTP_')) {
-                continue;
-            }
-
-            $headerName = str_replace('_', '-', substr($key, 5));
-            $headerName = implode('-', array_map(
-                ucfirst(...),
-                explode('-', strtolower($headerName)),
-            ));
-
-            if (in_array($headerName, ['Host', 'Content-Length', 'Connection'], true)) {
-                continue;
-            }
-
-            if (is_string($value)) {
-                $result[$headerName] = $value;
-            }
-        }
-
-        return $result;
     }
 
     /**
@@ -520,7 +588,31 @@ final readonly class StranglerProxy
     {
         $value = $settings[$name] ?? $default;
 
-        return is_numeric($value) ? (float) $value : $default;
+        if (! is_numeric($value)) {
+            return $default;
+        }
+
+        $number = (float) $value;
+
+        return is_finite($number) && $number > 0 ? $number : $default;
+    }
+
+    /**
+     * Verify HTTPS by default, allowing an explicit development opt-out or CA bundle.
+     *
+     * @param array<array-key, mixed> $settings
+     */
+    private static function tlsVerification(array $settings): bool|string
+    {
+        $value = $settings['verify_ssl'] ?? true;
+        if (is_bool($value)) {
+            return $value;
+        }
+        if (is_string($value) && $value !== '') {
+            return $value;
+        }
+
+        throw new InvalidArgumentException('verify_ssl must be a boolean or a CA bundle path.');
     }
 
     /**

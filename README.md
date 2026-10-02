@@ -1,34 +1,79 @@
 # Yii Strangler Proxy
 
 [![Tests][tests-badge]][tests-workflow]
+[![PHP 8.2–8.5][php-badge]](composer.json)
+[![MIT license][license-badge]](LICENSE)
+
+<details>
+<summary>Quality checks</summary>
+
 [![Code Coverage][coverage-badge]][coverage-workflow]
 [![Mutation Testing][mutation-badge]][mutation-workflow]
 [![Quality Assurance][quality-badge]][quality-workflow]
-
 [![Coding Guidelines][style-badge]][style-workflow]
 [![Markdown][markdown-badge]][markdown-workflow]
 [![ShellCheck][shellcheck-badge]][shellcheck-workflow]
 [![Spelling][spelling-badge]][spelling-workflow]
-
-[![PHP 8.2–8.5][php-badge]](composer.json)
-[![MIT license][license-badge]](LICENSE)
 [![PHPStan max][phpstan-badge]](phpstan.neon)
 [![Coverage gate 100%][coverage-gate-badge]][coverage-workflow]
 [![MSI gate 100%][mutation-gate-badge]](infection.json)
 
-A Strangler Fig adapter for gradually replacing legacy Yii 1.1 applications.
-Forward migrated controller actions to a modern HTTP backend while the remaining
-actions keep running in Yii; retire the legacy implementation one route at a time.
+The coverage and mutation badges describe enforced quality gates, not a guarantee
+that every application's API contract is compatible.
 
-Supports PHP 8.2 through 8.5, Yii 1.1 and Guzzle 7.
+</details>
 
-## Installation
+Migrate a Yii 1.1 application to a new monolith one feature at a time.
+Keep authentication, sessions and access checks in Yii; Strangler forwards enabled
+actions and leaves the remaining actions in the legacy application. When the APIs
+differ, an application-owned adapter preserves the existing client's contract.
 
-This package is under development and has no tagged release yet. For local development,
-add a Composer `path` repository pointing to this checkout and require `cosmira/strangler`.
-Load Composer's `vendor/autoload.php` before the Yii bootstrap.
+Requires **PHP 8.2+ and Yii 1.1.31+**; upgrade older runtimes first.
+Use it for JSON API actions. Legacy form fields can be translated to JSON; file
+uploads, binary bodies and streamed responses need a separate integration.
 
-## Yii configuration
+## How it works
+
+```text
+request → controller → security filters → Strangler → new monolith
+                                                   ↘ legacy action
+```
+
+After the security filters allow a request, Strangler checks the feature flag.
+It forwards enabled, mapped actions; otherwise, Yii runs the legacy action.
+
+## Getting started
+
+Until a tagged release is available, clone the package beside your Yii application:
+
+```shell
+git clone https://github.com/cosmira/strangler.git ../strangler
+```
+
+Merge these entries into the application's `composer.json`:
+
+```json
+{
+    "repositories": [
+        {
+            "type": "path",
+            "url": "../strangler",
+            "options": {
+                "symlink": false,
+                "versions": {"cosmira/strangler": "dev-main"}
+            }
+        }
+    ],
+    "require": {"cosmira/strangler": "dev-main"}
+}
+```
+
+Then run `composer update cosmira/strangler --with-all-dependencies` and load
+Composer's `vendor/autoload.php` before the Yii bootstrap. Record the package's
+reviewed commit with `git -C ../strangler rev-parse HEAD`; deploy that same checkout
+and your application's `composer.lock`. The pre-release API may change.
+
+Configure an existing backend endpoint returning `{"ID":42,"NAME":"Desk"}`:
 
 ```php
 'params' => [
@@ -36,116 +81,99 @@ Load Composer's `vendor/autoload.php` before the Yii bootstrap.
         'base_uri' => 'https://backend.example',
         'timeout' => 10,
         'connect_timeout' => 3,
-        'verify_ssl' => true,
-        'allow_redirects' => false,
-        'log_requests' => false,
         'features' => ['catalog' => true],
     ],
 ],
 ```
 
-`base_uri` must be explicitly configured. A missing URI produces a JSON 500 response.
-Feature flags default to disabled. Disabling a flag or omitting an action's route
-leaves the request in Yii.
+HTTPS certificates are verified by default. Protect the backend with a trusted
+channel before enabling the feature; the [integration guide](docs/integration.md)
+includes a server-owned token example.
 
-## Controller filter
+Add Strangler **last** to the controller's filters, starting with one existing
+read-only action:
 
 ```php
 use Cosmira\Strangler\Strangler;
 
-public function filters()
+class CatalogController extends CController
 {
-    return [
-        Strangler::proxy('catalog')
-            ->get('get', '/api/items')
-            ->get('view', '/api/items/{id}')
-            ->post('create', '/api/items')
-            ->put('update', '/api/items/{id}')
-            ->delete('delete', '/api/items/{id}')
-            ->build(),
-    ];
+    public function filters()
+    {
+        return [
+            'initLanguage',
+            'validateOpenAPI',
+            'accessControl',
+            Strangler::proxy('catalog') // Must be last.
+                ->get('view', '/api/items/{id}')
+                ->build(),
+        ];
+    }
+
+    // Keep the existing actionView() implementation for disabled features.
 }
 ```
 
-Action names are case-insensitive. Path placeholders are URL-encoded; `id` comes
-from the Yii request. `bodyIdentifier('ID')` supplies a fallback before a modifier
-removes identifiers from the payload. Other placeholders use the transformed
-payload, then the original query, accepting their upper-case legacy keys too.
+Use your application's actual authentication, access and input checks. The builder
+method sets the **outgoing** HTTP method; it does not restrict the incoming method.
+Write actions still require preceding HTTP verb, CSRF and resource-access checks.
 
-Payloads default to decoded JSON objects or arrays. Override their extraction with
-`payloadUsing(callable $reader)`, which receives the `CController` and returns an array.
-The route determines the outgoing method. POST, PUT, PATCH and DELETE send JSON;
-GET forwards query parameters without a body. The Yii routing parameter `r` is removed.
+> Only checks completed before Strangler protect forwarded requests. Checks inside
+> the action or `beforeAction()` are skipped. `afterAction()` and previous filters'
+> `postFilter()` do not run when Strangler ends the request. Review inherited hooks
+> and cleanup before enabling the feature.
 
-## Application-owned behavior
+With a permitted legacy session, request the existing API:
 
-`usingModifier()` accepts a `StranglerModifierInterface` instance, class name or Yii
-component configuration. The modifier transforms the query, payload and response.
-Field mappings and domain-specific compatibility rules belong to the application.
-Malformed configurations, Yii component errors (`CException`) and components that
-do not implement the modifier interface produce a JSON 500 response before sending
-a request. Other exceptions from modifier constructors and transformations remain
-visible to Yii.
-
-`bypassUsing(callable $bypass)` receives the controller, normalized action and original
-query. Returning `true` keeps the request in Yii. `bypassWhenPayloadHas('update', ['special'])`
-also keeps a request in Yii when a listed payload key exists, including a `null` value.
-
-`afterRequest(callable $callback)` receives the outgoing method and resolved path once
-after receiving an upstream response, before response transformation, or after a Guzzle
-transport exception. Applications can use it to notify their existing UI. It does not
-mean a write committed: an error or timeout can leave the upstream outcome uncertain.
-Exceptions raised by application callbacks remain visible to Yii.
-
-## HTTP behavior
-
-The proxy forwards request headers except Host, Content-Length and Connection, then
-sets `X-User-Id`, `X-Strangler`, `X-Strangler-Locale` and JSON Accept headers. Those
-identity headers describe the current Yii user; the receiving application owns trust
-validation and authorization.
-
-Upstream error responses retain their status and body, including responses with a
-Location header. Content-Length and Transfer-Encoding response headers are omitted.
-Guzzle transport errors become JSON 503 responses. Requests are never retried by the
-package. HTTP error exceptions and redirects are disabled by default, including
-when a `ClientInterface` is supplied through the filter's `client` property.
-
-The default timeouts are 10 seconds total and 3 seconds to connect. Configure TLS
-verification explicitly; `verify_ssl` currently defaults to `false` to retain the
-legacy proxy's behavior. `X-Strangler-Time` is included when `YII_DEBUG` is enabled.
-
-## Tests and ownership
-
-```sh
-composer install
-composer test -- --order-by=random
-composer test:types
-composer test:rector
-composer test:coverage
-composer test:mutation -- --threads=4
+```shell
+curl -i --cookie yii-session.txt 'https://legacy.example/index.php?r=catalog/view&id=42'
 ```
 
-PHPStan runs at `max`. Coverage requires exactly 100% of classes, methods and lines;
-the Clover report is saved to `build/coverage.xml`. Infection requires 100% MSI and
-covered MSI with the default mutators. Mutation runs select the test cases covering
-each mutant; timeouts count as escaped mutants and fail the check. Coverage and
-mutation runs need PCOV or Xdebug; PCOV includes the checkout so isolated PHPUnit
-tests can report coverage.
-The mutation runner handles macOS process-priority warnings that would otherwise
-make isolated tests fail before exercising a mutant.
+Expect the backend body `{"ID":42,"NAME":"Desk"}`, its status, and `X-Strangler: 1`.
+Turn `features.catalog` off and repeat: Yii should run `actionView()` instead.
+GET and HEAD send query parameters; POST, PUT, PATCH and DELETE also send JSON.
+Missing URL parameters or invalid JSON return `400` before contacting the backend.
 
-CI also runs Soda against `src` with `soda.php`. To run that check locally with
-a checkout of `cosmira/soda` at `.tools/soda`, install its dependencies and run:
+## When the APIs differ
 
-```sh
-composer install --working-dir=.tools/soda --no-dev
-composer test:soda
-```
+Attach an **API contract adapter** with `usingModifier()`. It translates fields,
+nesting, types and responses; `payloadUsing()` reads legacy form fields.
+Follow the [API adaptation guide](docs/api-adaptation.md) for a complete example
+with pagination, body identifiers and both backend and transport errors.
 
-Package tests use actual Yii filters and Guzzle MockHandler; no remote backend or
-application database is needed. Host applications retain their own end-to-end contract
-tests for permissions, business results and legacy compatibility. This initial extraction
-does not include application-specific REST mappers or install itself into a host project.
+## Sessions and user context
+
+Strangler sends the current Yii identity as `X-User-Id` and the current language as
+`X-Strangler-Locale`. Guests have an empty user identifier. Identity alone does not
+provide roles, tenant context or resource permissions; define those checks for your
+feature before forwarding it.
+
+Sessions stay in Yii: client Cookie and Authorization headers are not forwarded by
+default, and backend Set-Cookie headers are always removed. `X-Strangler: 1` is a
+diagnostic marker. It does not prove authentication; use the
+[trusted-channel instructions](docs/integration.md#trusted-channel).
+
+## Feature flags and errors
+
+Only the boolean `true` enables a feature. Missing flags and unmapped actions stay
+in Yii. Deployment and support teams can set a flag to `false`; configuration reload
+and data compatibility determine whether rollback is possible. See the
+[rollout checklist](docs/integration.md#rollout-and-rollback).
+
+**Strangler never falls back to Yii after forwarding and never retries requests.**
+The backend may have completed a write before its response was lost. A second
+execution could duplicate data. Backend errors are returned; transport failures
+return `503`, and a missing backend returns `500`. A configured API adapter can
+translate these responses into the old client's format. An unavailable adapter
+returns `500` without translation. Other configuration and programming errors
+reach the application's Yii error handler.
+
+## Quick diagnostics
+
+Handled responses include `X-Strangler: 1`. In `YII_DEBUG`, backend responses also
+include `X-Strangler-Time` in milliseconds. Enable `log_requests` to record forwarding
+in the Yii `strangler` category. If a request stays in Yii, check the feature flag,
+action mapping and bypass rule; see [logging and callbacks](docs/integration.md#logging-and-callbacks).
 
 [tests-badge]: https://github.com/cosmira/strangler/actions/workflows/phpunit.yml/badge.svg?branch=main
 [tests-workflow]: https://github.com/cosmira/strangler/actions/workflows/phpunit.yml

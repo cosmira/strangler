@@ -36,16 +36,10 @@ final class StranglerFilter extends CFilter
             return true;
         }
 
-        if (StranglerProxy::shouldBypass($filterChain->controller, $this->config, $actionId)) {
-            return true;
-        }
-
-        (new StranglerProxy($this->client))->handle(
+        return ! (new StranglerProxy($this->client))->handle(
             $filterChain->controller,
             $this->config,
             $actionId,
         );
-
-        return false;
     }
 }
