@@ -1,0 +1,60 @@
+name: Mutation Testing
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mutation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  infection:
+    name: Infection
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup PHP
+        id: php
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: mbstring, dom, fileinfo, pdo_sqlite
+          coverage: pcov
+          tools: composer:v2
+
+      - name: Cache Composer downloads
+        uses: actions/cache@v5
+        with:
+          path: ~/.composer/cache/files
+          key: composer-${{ runner.os }}-${{ steps.php.outputs.php-version }}-${{ hashFiles('composer.json') }}
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Run mutation tests
+        run: |
+          mkdir -p build/infection
+          vendor/bin/infection \
+            --threads=4 \
+            --logger-github=true \
+            --logger-html=build/infection/index.html \
+            --logger-summary-json=build/infection/summary.json \
+            --logger-text=build/infection/infection.log
+
+      - name: Upload mutation report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: mutation-testing-report
+          path: build/infection
+          if-no-files-found: warn

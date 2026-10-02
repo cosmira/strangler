@@ -1,0 +1,77 @@
+name: Code Coverage
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coverage-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Setup PHP
+        id: php
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: mbstring, dom, fileinfo, pdo_sqlite
+          coverage: pcov
+          tools: composer:v2
+
+      - name: Cache Composer downloads
+        uses: actions/cache@v5
+        with:
+          path: ~/.composer/cache/files
+          key: composer-${{ runner.os }}-${{ steps.php.outputs.php-version }}-${{ hashFiles('composer.json') }}
+
+      - name: Install dependencies
+        run: composer install --prefer-dist --no-interaction --no-progress
+
+      - name: Run PHPUnit with coverage
+        run: vendor/bin/phpunit --coverage-clover=build/coverage.xml --coverage-html=build/coverage-html --coverage-text --colors=never
+
+      - name: Check coverage and write summary
+        run: |
+          php <<'PHP'
+          <?php
+          $xml = simplexml_load_file('build/coverage.xml');
+          if ($xml === false || !isset($xml->project->metrics)) {
+              fwrite(STDERR, "Cannot read coverage metrics.\n");
+              exit(1);
+          }
+          $total = (int) $xml->project->metrics['statements'];
+          $covered = (int) $xml->project->metrics['coveredstatements'];
+          if ($total <= 0) {
+              fwrite(STDERR, "Coverage contains no statements.\n");
+              exit(1);
+          }
+          $percent = 100 * $covered / $total;
+          file_put_contents(getenv('GITHUB_STEP_SUMMARY'), sprintf(
+              "## Code coverage\n\nStatements: **%.2f%%**. Minimum: **80%%**.\n", $percent
+          ), FILE_APPEND);
+          exit($percent >= 80 ? 0 : 1);
+          PHP
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-report
+          path: |
+            build/coverage.xml
+            build/coverage-html
+          if-no-files-found: warn

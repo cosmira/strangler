@@ -1,0 +1,12 @@
+parameters:
+    level: 5
+    paths:
+        - src
+        - tests
+    tmpDir: .phpstan.cache
+    dynamicConstantNames:
+        - YII_DEBUG
+    bootstrapFiles:
+        - tests/bootstrap.php
+    scanDirectories:
+        - vendor/yiisoft/yii/framework

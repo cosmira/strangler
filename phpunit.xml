@@ -1,8 +1,23 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<phpunit bootstrap="tests/bootstrap.php" colors="true" cacheDirectory=".phpunit.cache"
-         failOnWarning="true" failOnRisky="true">
+<phpunit xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         backupGlobals="false"
+         bootstrap="tests/bootstrap.php"
+         colors="true"
+         processIsolation="false"
+         stopOnFailure="false"
+         stopOnError="false"
+         executionOrder="random"
+         defaultTestSuite="Main"
+         xsi:noNamespaceSchemaLocation="https://schema.phpunit.de/11.5/phpunit.xsd">
+    <source>
+        <include>
+            <directory suffix=".php">./src</directory>
+        </include>
+    </source>
     <testsuites>
-        <testsuite name="strangler"><directory>tests</directory></testsuite>
+        <testsuite name="Main">
+            <directory suffix="Test.php">./tests</directory>
+        </testsuite>
     </testsuites>
-    <source><include><directory>src</directory></include></source>
+    <logging/>
 </phpunit>

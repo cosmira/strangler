@@ -1,3 +1,9 @@
 /vendor/
 /composer.lock
 /.phpunit.cache/
+/.phpstan.cache/
+/.tools/
+/build/
+/infection*.log
+/infection-results.json
+/.infection/

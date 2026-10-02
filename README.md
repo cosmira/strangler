@@ -1,9 +1,10 @@
 # Yii Strangler Proxy
 
-A Composer package for forwarding selected Yii 1.1 controller actions to another
-HTTP backend while the remaining actions continue running in Yii.
+A Strangler Fig adapter for gradually replacing legacy Yii 1.1 applications.
+Forward migrated controller actions to a modern HTTP backend while the remaining
+actions keep running in Yii; retire the legacy implementation one route at a time.
 
-Requires PHP 8.1 or later, Yii 1.1 and Guzzle 7.
+Supports PHP 8.2 through 8.5, Yii 1.1 and Guzzle 7.
 
 ## Installation
 
